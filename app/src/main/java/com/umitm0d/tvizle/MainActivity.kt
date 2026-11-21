@@ -10,6 +10,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.app.DownloadManager
+import android.database.Cursor
 import android.graphics.Color
 import android.media.MediaMetadata
 import android.media.session.MediaSession
@@ -19,6 +21,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.SystemClock
+import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -37,9 +40,12 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.Toast
+import androidx.core.content.FileProvider
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 
 /** ÜmitTV – assets/umittv_core.dat'i tam ekran WebView'de açar.
  *  v1.1: mikrofon (sesli komut), dosya ekleme, direksiyon tuşlarıyla kanal değiştirme. */
@@ -55,6 +61,11 @@ class MainActivity : Activity() {
          *  bazı sunucular "application/octet-stream" döner; o durumda WebView sayfayı HTML olarak yorumlayamaz —
          *  gerekiyorsa dosyayı index.html adıyla barındırın ya da klasörün sonuna "/" ekleyin). */
         private const val REMOTE_URL = "https://umitm0d.github.io/Alakart/Umitm0dTam1Ka"
+
+        /** Güncelleme bilgisini buradan okur: {"versionCode":3,"versionName":"1.2","url":"https://.../UmitTV.apk","notes":"..."} */
+        private const val UPDATE_MANIFEST_URL = "https://umitm0d.github.io/Alakart/umittv_update.json"
+        private const val UPDATE_CHECK_MIN_GAP_MS = 6L * 60 * 60 * 1000   // en az 6 saatte bir kontrol et
+        private const val REQ_INSTALL_SRC = 4104
     }
 
     private lateinit var web: WebView
@@ -376,6 +387,10 @@ class MainActivity : Activity() {
             finishFile(r)
             return
         }
+        if (req == REQ_INSTALL_SRC) {
+            checkPendingInstallResume()   // ayrıca onResume'da da denenir; burada daha hızlı tepki
+            return
+        }
         @Suppress("DEPRECATION")
         super.onActivityResult(req, res, data)
     }
@@ -547,6 +562,8 @@ class MainActivity : Activity() {
             val f = IntentFilter(Intent.ACTION_MEDIA_BUTTON).apply { priority = 1000 }
             runCatching { registerReceiver(mediaBtnReceiver, f); btnReceiverOn = true }
         }
+        maybeCheckForUpdate()
+        checkPendingInstallResume()
     }
 
     override fun onPause() {
@@ -560,6 +577,157 @@ class MainActivity : Activity() {
         destroyRecognizer()
         mediaSession?.release(); mediaSession = null
         fileCb?.onReceiveValue(null); fileCb = null
+        if (dlReceiverOn) { runCatching { unregisterReceiver(dlCompleteReceiver) }; dlReceiverOn = false }
         root.removeAllViews(); web.destroy(); super.onDestroy()
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    //  Uygulama içi güncelleme (APK'yı kendi içinden indirip kurar)
+    // ─────────────────────────────────────────────────────────────
+    private var updDialogShowing = false
+    private var pendingApkUrl: String? = null
+    private var pendingDownloadId: Long = -1L
+    private var awaitingInstallPermission = false
+    private var dlReceiverOn = false
+
+    private fun currentVersionCode(): Int =
+        if (Build.VERSION.SDK_INT >= 28) packageManager.getPackageInfo(packageName, 0).longVersionCode.toInt()
+        else @Suppress("DEPRECATION") packageManager.getPackageInfo(packageName, 0).versionCode
+
+    /** En az UPDATE_CHECK_MIN_GAP_MS'de bir, arka plan iş parçacığında manifestoyu kontrol eder. */
+    private fun maybeCheckForUpdate() {
+        val sp = getSharedPreferences("umittv", MODE_PRIVATE)
+        val last = sp.getLong("upd_last_check", 0L)
+        val now = System.currentTimeMillis()
+        if (now - last < UPDATE_CHECK_MIN_GAP_MS) return
+        sp.edit().putLong("upd_last_check", now).apply()
+        Thread {
+            try {
+                val conn = (URL(UPDATE_MANIFEST_URL).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 8000; readTimeout = 8000; requestMethod = "GET"
+                }
+                val code = conn.responseCode
+                if (code !in 200..299) return@Thread
+                val body = conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
+                conn.disconnect()
+                val j = JSONObject(body)
+                val remoteCode = j.optInt("versionCode", -1)
+                val url = j.optString("url", "")
+                if (remoteCode <= currentVersionCode() || url.isBlank()) return@Thread
+                val name = j.optString("versionName", "")
+                val notes = j.optString("notes", "")
+                runOnUiThread { showUpdateDialog(url, name, notes) }
+            } catch (e: Exception) {
+                // sessizce geç: ağ yok / JSON bozuk / sunucu yok — kullanıcıyı rahatsız etme
+            }
+        }.start()
+    }
+
+    private fun showUpdateDialog(apkUrl: String, versionName: String, notes: String) {
+        if (updDialogShowing || isFinishing) return
+        updDialogShowing = true
+        val msg = buildString {
+            if (versionName.isNotBlank()) append("Yeni sürüm: $versionName\n\n")
+            append(if (notes.isNotBlank()) notes else "Uygulamanın yeni bir sürümü hazır.")
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Güncelleme mevcut")
+            .setMessage(msg)
+            .setCancelable(false)
+            .setPositiveButton("Güncelle") { d, _ -> d.dismiss(); updDialogShowing = false; beginDownload(apkUrl) }
+            .setNegativeButton("Daha sonra") { d, _ -> d.dismiss(); updDialogShowing = false }
+            .show()
+    }
+
+    private fun canInstallUnknown(): Boolean =
+        Build.VERSION.SDK_INT < 26 || packageManager.canRequestPackageInstalls()
+
+    private fun beginDownload(apkUrl: String) {
+        if (!canInstallUnknown()) {
+            // Android 8+: "Bilinmeyen kaynaklar" izni bu uygulama için ayrıca açılmalı
+            pendingApkUrl = apkUrl
+            awaitingInstallPermission = true
+            toast("Kurulum için bir sonraki ekranda ÜmitTV'ye izin ver")
+            try {
+                val i = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
+                startActivityForResult(i, REQ_INSTALL_SRC)
+            } catch (e: Exception) {
+                startActivityForResult(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES), REQ_INSTALL_SRC)
+            }
+            return
+        }
+        startApkDownload(apkUrl)
+    }
+
+    /** Ayarlar ekranından dönünce izin verildiyse indirmeye devam et. */
+    private fun checkPendingInstallResume() {
+        if (awaitingInstallPermission && canInstallUnknown()) {
+            awaitingInstallPermission = false
+            pendingApkUrl?.let { startApkDownload(it) }
+            pendingApkUrl = null
+        }
+    }
+
+    private fun startApkDownload(apkUrl: String) {
+        try {
+            registerDownloadReceiverIfNeeded()
+            val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            val req = DownloadManager.Request(Uri.parse(apkUrl))
+                .setTitle("ÜmitTV güncelleme")
+                .setDescription("İndiriliyor…")
+                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                .setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, "UmitTV_update.apk")
+                .setAllowedOverMetered(true)
+                .setAllowedOverRoaming(true)
+            pendingDownloadId = dm.enqueue(req)
+            toast("Güncelleme indiriliyor, bitince kurulum ekranı açılacak")
+        } catch (e: Exception) {
+            toast("İndirme başlatılamadı: ${e.message}")
+        }
+    }
+
+    private fun registerDownloadReceiverIfNeeded() {
+        if (dlReceiverOn) return
+        val f = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
+        runCatching { registerReceiver(dlCompleteReceiver, f); dlReceiverOn = true }
+    }
+
+    private val dlCompleteReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, i: Intent) {
+            val id = i.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
+            if (id == -1L || id != pendingDownloadId) return
+            val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            var cur: Cursor? = null
+            try {
+                cur = dm.query(DownloadManager.Query().setFilterById(id))
+                if (cur != null && cur.moveToFirst()) {
+                    val statusIdx = cur.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                    val status = if (statusIdx >= 0) cur.getInt(statusIdx) else -1
+                    if (status == DownloadManager.STATUS_SUCCESSFUL) {
+                        val apk = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "UmitTV_update.apk")
+                        installApk(apk)
+                    } else {
+                        toast("Güncelleme indirilemedi, tekrar dener misin?")
+                    }
+                }
+            } finally {
+                cur?.close()
+                pendingDownloadId = -1L
+            }
+        }
+    }
+
+    private fun installApk(apk: File) {
+        if (!apk.exists()) { toast("Güncelleme dosyası bulunamadı"); return }
+        try {
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", apk)
+            val i = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(i)
+        } catch (e: Exception) {
+            toast("Kurulum ekranı açılamadı: ${e.message}")
+        }
     }
 }
