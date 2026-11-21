@@ -9,7 +9,7 @@ android {
         applicationId = "com.umitm0d.tvizle"
         minSdk = 21
         targetSdk = 30
-        versionCode = 3
+        versionCode = 4
         versionName = "1.2"
     }
     lint {
