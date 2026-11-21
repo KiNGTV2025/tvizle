@@ -28,5 +28,3 @@ jobs:
           echo "### 📦 APK hazır" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "[⬇️ UmitTV APK'yı indir](${{ steps.upload.outputs.artifact-url }})" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "İndirilen zip'in içinden app-release.apk çıkar, UmitTV.apk adıyla Alakart reposuna yükle." >> "$GITHUB_STEP_SUMMARY"

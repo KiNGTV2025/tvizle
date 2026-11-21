@@ -47,7 +47,7 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** ÜmitTV – assets/umittv_core.dat'i tam ekran WebView'de açar.
+/** ÜmitTV – REMOTE_URL'deki sayfayı tam ekran WebView'de açar (sayfa APK'nın içinde gömülü değil).
  *  v1.1: mikrofon (sesli komut), dosya ekleme, direksiyon tuşlarıyla kanal değiştirme. */
 class MainActivity : Activity() {
 
@@ -66,6 +66,14 @@ class MainActivity : Activity() {
         private const val UPDATE_MANIFEST_URL = "https://umitm0d.github.io/Alakart/umittv_update.json"
         private const val UPDATE_CHECK_MIN_GAP_MS = 6L * 60 * 60 * 1000   // en az 6 saatte bir kontrol et
         private const val REQ_INSTALL_SRC = 4104
+        private val OFFLINE_HTML = """<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{margin:0;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;
+background:#140b05;color:#ffb366;font-family:sans-serif;text-align:center;padding:24px;box-sizing:border-box}
+h2{margin:0 0 12px}p{margin:0 0 28px;color:#e0c2a0}
+a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-weight:bold;text-decoration:none}</style></head>
+<body><h2>Sunucuya ulaşılamadı</h2><p>İnternet bağlantını kontrol edip tekrar dene.</p>
+<a href="$REMOTE_URL">Tekrar dene</a></body></html>"""
     }
 
     private lateinit var web: WebView
@@ -193,9 +201,9 @@ class MainActivity : Activity() {
         web.requestFocus()
     }
 
-    /** Üzerine önceki istemciyi genişletip hata durumunda yerel yedek dosyayı yükleyen istemci. */
+    /** Sayfa yüklenemezse önce WebView önbelleğini, o da yoksa 'çevrimdışı' sayfasını gösteren istemci. */
     private fun remoteClient(): WebViewClient = object : WebViewClient() {
-        private var failedOnce = false
+        private var phase = 0 // 0: normal, 1: önbellekten deniyor, 2: çevrimdışı sayfası açık
         override fun shouldOverrideUrlLoading(v: WebView, req: WebResourceRequest): Boolean {
             val u = req.url.toString()
             return when {
@@ -206,52 +214,27 @@ class MainActivity : Activity() {
                 else -> { runCatching { startActivity(Intent(Intent.ACTION_VIEW, req.url)) }; true }
             }
         }
+        override fun onPageStarted(v: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+            super.onPageStarted(v, url, favicon)
+            // Çevrimdışı sayfasından "Tekrar dene"ye basıldı: normal moda dön
+            if (phase == 2 && url == REMOTE_URL) {
+                phase = 0
+                v.settings.cacheMode = WebSettings.LOAD_DEFAULT
+            }
+        }
         @Suppress("DEPRECATION")
         override fun onReceivedError(v: WebView, code: Int, desc: String?, url: String?) {
-            if (failedOnce || url != REMOTE_URL) return
-            failedOnce = true
-            toast("Sunucuya ulaşılamadı, yerel kopya açılıyor")
-            v.loadUrl("file:///android_asset/umittv_core.dat")
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    //  İzinler
-    // ─────────────────────────────────────────────────────────────
-    private fun hasAudioPerm(): Boolean =
-        Build.VERSION.SDK_INT < 23 ||
-            checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-
-    private fun requestAudioPerm() {
-        if (Build.VERSION.SDK_INT >= 23)
-            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_AUDIO)
-    }
-
-    /** Mikrofon iznini ilk açılışta bir kez sor, sonra her açılışta rahatsız etme. */
-    private fun askAudioOnce() {
-        val sp = getSharedPreferences("umittv", MODE_PRIVATE)
-        if (!hasAudioPerm() && !sp.getBoolean("audio_asked", false)) {
-            sp.edit().putBoolean("audio_asked", true).apply()
-            requestAudioPerm()
-        }
-    }
-
-    override fun onRequestPermissionsResult(code: Int, perms: Array<out String>, res: IntArray) {
-        super.onRequestPermissionsResult(code, perms, res)
-        val ok = res.isNotEmpty() && res[0] == PackageManager.PERMISSION_GRANTED
-        when (code) {
-            REQ_AUDIO -> {
-                pendingPermReq?.let {
-                    if (ok) it.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) else it.deny()
-                }
-                pendingPermReq = null
-                val p = pendingSpeech; pendingSpeech = null
-                if (ok) p?.invoke() else if (p != null) {
-                    toast("Mikrofon izni verilmedi – Ayarlar > Uygulamalar > ÜmitTV > İzinler")
-                    jsSR("error", JSONObject().put("error", "not-allowed")); jsSR("end")
-                }
+            if (url != REMOTE_URL || phase == 2) return
+            if (phase == 0) {
+                phase = 1
+                toast("Sunucuya ulaşılamadı, son açılan sürüm deneniyor")
+                v.settings.cacheMode = WebSettings.LOAD_CACHE_ELSE_NETWORK
+                v.loadUrl(REMOTE_URL)
+                return
             }
-            REQ_STORAGE -> showDirDialog(Environment.getExternalStorageDirectory())
+            phase = 2
+            v.settings.cacheMode = WebSettings.LOAD_DEFAULT
+            v.loadDataWithBaseURL(null, OFFLINE_HTML, "text/html", "UTF-8", null)
         }
     }
 
@@ -263,7 +246,7 @@ class MainActivity : Activity() {
         fun startListening(lang: String, interim: Boolean, maxAlt: Int) {
             runOnUiThread {
                 val u = web.url
-                val ok = u != null && (u.startsWith("file:///android_asset/") || u.startsWith(REMOTE_URL))
+                val ok = u != null && u.startsWith(REMOTE_URL)
                 if (!ok) return@runOnUiThread
                 startSpeech(lang, interim, maxAlt)
             }

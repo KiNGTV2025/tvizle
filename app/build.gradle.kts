@@ -9,8 +9,8 @@ android {
         applicationId = "com.umitm0d.tvizle"
         minSdk = 21
         targetSdk = 30
-        versionCode = 4
-        versionName = "1.2"
+        versionCode = (project.findProperty("vcode") as String?)?.toIntOrNull() ?: 3
+        versionName = (project.findProperty("vname") as String?) ?: "1.2"
     }
     lint {
         checkReleaseBuilds = false
