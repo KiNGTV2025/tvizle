@@ -68,6 +68,46 @@ class MainActivity : Activity() {
         private const val REQ_INSTALL_SRC = 4104
         /** true: sayfadaki "harici oynatıcı" butonu uygulamanın kendi ExoPlayer oynatıcısını açar. false: eski gibi sistem seçicisi. */
         private const val USE_BUILTIN_PLAYER = true
+        /** true: sayfadaki web oynatıcı yerine her yayın doğrudan ÜmitTV'nin ExoPlayer'ında açılır (ana oynatıcı). */
+        private const val NATIVE_MAIN_PLAYER = true
+        private val HOOK_JS = """(function(){
+if(window.__umitHook)return;window.__umitHook=1;
+var lastU='',lastT=0;
+function stopWeb(){try{document.querySelectorAll('video,audio').forEach(function(v){try{v.pause();v.removeAttribute('src');v.load();}catch(e){}});}catch(e){}}
+function go(u){
+  if(window.__umitNativeOwn)return false;
+  try{u=new URL(u,location.href).href;}catch(e){return false;}
+  if(!/^https?:/i.test(u))return false;
+  var n=Date.now();
+  if((u===lastU&&n-lastT<30000)||n-lastT<1500){return true;}
+  lastU=u;lastT=n;
+  try{UmitNative.playNative(u,'','');}catch(e){return false;}
+  setTimeout(stopWeb,50);
+  return true;
+}
+var d=Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype,'src');
+if(d&&d.set){Object.defineProperty(HTMLMediaElement.prototype,'src',{configurable:true,get:function(){return d.get.call(this);},set:function(v){if(v&&!/^(blob|data):/i.test(v)&&go(v))return;d.set.call(this,v);}});}
+function patchHls(H){
+  if(!H||!H.prototype||H.prototype.__u)return;
+  var o=H.prototype.loadSource;
+  H.prototype.loadSource=function(u){if(go(u))return;return o.apply(this,arguments);};
+  H.prototype.__u=1;
+}
+var _H=window.Hls;
+try{Object.defineProperty(window,'Hls',{configurable:true,get:function(){return _H;},set:function(v){_H=v;patchHls(v);}});}catch(e){}
+patchHls(_H);
+function patchTs(name){
+  var _M=window[name];
+  function p(M){if(!M||M.__u||!M.createPlayer)return;var o=M.createPlayer;M.createPlayer=function(c){try{if(c&&c.url)go(c.url);}catch(e){}return o.apply(this,arguments);};M.__u=1;}
+  try{Object.defineProperty(window,name,{configurable:true,get:function(){return _M;},set:function(v){_M=v;p(v);}});}catch(e){}
+  p(_M);
+}
+patchTs('mpegts');patchTs('flvjs');
+var re=/\.(m3u8|mpd|flv)(\?|#|$)/i;
+var xo=XMLHttpRequest.prototype.open;
+XMLHttpRequest.prototype.open=function(m,u){try{if(re.test(String(u)))go(u);}catch(e){}return xo.apply(this,arguments);};
+if(window.fetch){var of=window.fetch;window.fetch=function(r){try{var u=(r&&r.url)||String(r);if(re.test(u))go(u);}catch(e){}return of.apply(this,arguments);};}
+})();"""
         private val OFFLINE_HTML = """<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>body{margin:0;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -216,8 +256,13 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 else -> { runCatching { startActivity(Intent(Intent.ACTION_VIEW, req.url)) }; true }
             }
         }
+        override fun onPageFinished(v: WebView, url: String?) {
+            super.onPageFinished(v, url)
+            if (NATIVE_MAIN_PLAYER && url != null && url.startsWith(REMOTE_URL)) v.evaluateJavascript(HOOK_JS, null)
+        }
         override fun onPageStarted(v: WebView, url: String?, favicon: android.graphics.Bitmap?) {
             super.onPageStarted(v, url, favicon)
+            if (NATIVE_MAIN_PLAYER && url != null && url.startsWith(REMOTE_URL)) v.evaluateJavascript(HOOK_JS, null)
             // Çevrimdışı sayfasından "Tekrar dene"ye basıldı: normal moda dön
             if (phase == 2 && url == REMOTE_URL) {
                 phase = 0
@@ -291,6 +336,18 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 val ok = u != null && u.startsWith(REMOTE_URL)
                 if (!ok) return@runOnUiThread
                 startSpeech(lang, interim, maxAlt)
+            }
+        }
+        @JavascriptInterface
+        fun playNative(url: String, ua: String, referer: String) {
+            runOnUiThread {
+                val u = web.url
+                if (u == null || !u.startsWith(REMOTE_URL)) return@runOnUiThread
+                if (!(url.startsWith("http://") || url.startsWith("https://"))) return@runOnUiThread
+                startActivity(Intent(this@MainActivity, PlayerActivity::class.java)
+                    .putExtra(PlayerActivity.EXTRA_URL, url)
+                    .putExtra(PlayerActivity.EXTRA_UA, ua)
+                    .putExtra(PlayerActivity.EXTRA_REFERER, referer))
             }
         }
         @JavascriptInterface
