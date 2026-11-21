@@ -68,8 +68,9 @@ class MainActivity : Activity() {
         private const val REQ_INSTALL_SRC = 4104
         /** true: sayfadaki "harici oynatıcı" butonu uygulamanın kendi ExoPlayer oynatıcısını açar. false: eski gibi sistem seçicisi. */
         private const val USE_BUILTIN_PLAYER = true
-        /** true: sayfadaki web oynatıcı yerine her yayın doğrudan ÜmitTV'nin ExoPlayer'ında açılır (ana oynatıcı). */
-        private const val NATIVE_MAIN_PLAYER = true
+        /** ESKİ yöntem: yayını ayrı bir ExoPlayer EKRANINDA açan kanca. Artık kapalı; ana motor sayfanın kendi video
+         *  alanındaki ExoPlayer'dır (NativeVideo + sayfadaki umit_native_video.js köprüsü, bkz. VideoBridge). */
+        private const val NATIVE_MAIN_PLAYER = false
         private val HOOK_JS = """(function(){
 if(window.__umitHook)return;window.__umitHook=1;
 var lastU='',lastT=0;
@@ -120,6 +121,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
     private lateinit var web: WebView
     private lateinit var root: FrameLayout
+    private lateinit var nv: NativeVideo
     private var customView: View? = null
     private var customCb: WebChromeClient.CustomViewCallback? = null
 
@@ -147,8 +149,9 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         super.onCreate(b)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
-        web = WebView(this).apply { setBackgroundColor(Color.BLACK); isFocusable = true }
+        web = WebView(this).apply { setBackgroundColor(Color.TRANSPARENT); isFocusable = true }   // şeffaf: video arkadaki SurfaceView'den görünür
         root.addView(web, match)
+        nv = NativeVideo(this, root, web) { js -> web.evaluateJavascript(js, null) }   // WebView'in ALTINA video katmanı
         setContentView(root)
 
         with(web.settings) {
@@ -172,7 +175,8 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
         // sayfadaki webkitSpeechRecognition → yerel SpeechRecognizer köprüsü (umit_native.js kullanır)
         web.addJavascriptInterface(SpeechBridge(), "UmitNative")
-
+        // sayfadaki <video>/hls.js/mpegts.js çağrılarını ExoPlayer'a çeviren köprü (umit_native_video.js kullanır)
+        web.addJavascriptInterface(VideoBridge(), "UmitVideo")
         web.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(v: WebView, req: WebResourceRequest): Boolean {
                 val u = req.url.toString()
@@ -187,7 +191,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         }
         web.webChromeClient = object : WebChromeClient() {
             override fun onShowCustomView(v: View, cb: CustomViewCallback) {
-                if (customView != null) { cb.onCustomViewHidden(); return }
+                if (customView != null || nv.isActive) { cb.onCustomViewHidden(); return }
                 customView = v; customCb = cb
                 web.visibility = View.GONE
                 root.addView(v, match)
@@ -322,6 +326,39 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 }
             }
             REQ_STORAGE -> showDirDialog(Environment.getExternalStorageDirectory())
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    //  Ana oynatıcı: sayfadaki <video> ⇄ ExoPlayer köprüsü
+    // ─────────────────────────────────────────────────────────────
+    /** Sayfadaki umit_native_video.js bunu window.UmitVideo olarak görür. Tüm çağrılar ana iş parçacığına alınır
+     *  ve yalnızca REMOTE_URL sayfasından kabul edilir. */
+    inner class VideoBridge {
+        private fun trusted(): Boolean { val u = web.url; return u != null && u.startsWith(REMOTE_URL) }
+        private fun ui(f: () -> Unit) = runOnUiThread { if (trusted()) f() }
+
+        @JavascriptInterface
+        fun load(url: String, ua: String, referer: String, startMs: Double, autoplay: Boolean, kind: String) = ui {
+            if (url.startsWith("http://") || url.startsWith("https://")) nv.load(url, ua, referer, startMs.toLong(), autoplay, kind)
+        }
+        @JavascriptInterface fun play() = ui { nv.play() }
+        @JavascriptInterface fun pause() = ui { nv.pause() }
+        @JavascriptInterface fun seek(ms: Double) = ui { nv.seek(ms.toLong()) }
+        @JavascriptInterface fun volume(v: Double, muted: Boolean) = ui { nv.volume(v, muted) }
+        @JavascriptInterface fun rate(r: Double) = ui { nv.rate(r) }
+        @JavascriptInterface fun stop() = ui { nv.stop() }
+        @JavascriptInterface fun retry() = ui { nv.retry() }
+        @JavascriptInterface fun level(i: Int) = ui { nv.level(i) }
+        @JavascriptInterface fun audio(i: Int) = ui { nv.audio(i) }
+        @JavascriptInterface
+        fun rect(x: Double, y: Double, w: Double, h: Double, iw: Double, ih: Double, show: Boolean, fit: String) =
+            ui { nv.rect(x, y, w, h, iw, ih, show, fit) }
+        /** Sayfa arka plan rengi ("rgb(r, g, b)"): video saydam deliğinin dışında kalan alan bu renkte görünsün. */
+        @JavascriptInterface
+        fun bg(css: String) = ui {
+            val m = Regex("""rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)""").find(css)
+            if (m != null) nv.background(Color.rgb(m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.groupValues[3].toInt()))
         }
     }
 
@@ -653,7 +690,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     }
 
     override fun onResume() {
-        super.onResume(); web.onResume(); immersive()
+        super.onResume(); web.onResume(); immersive(); nv.onHostStart()
         mediaSession?.isActive = true            // direksiyon medya tuşları bu uygulamaya gelsin
         if (!btnReceiverOn) {
             val f = IntentFilter(Intent.ACTION_MEDIA_BUTTON).apply { priority = 1000 }
@@ -667,6 +704,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         mediaSession?.isActive = false           // arka plandayken müzik/navigasyon uygulamasının tuşlarını çalma
         if (btnReceiverOn) { runCatching { unregisterReceiver(mediaBtnReceiver) }; btnReceiverOn = false }
         destroyRecognizer()
+        nv.onHostStop()
         web.onPause(); super.onPause()
     }
 
@@ -675,6 +713,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         mediaSession?.release(); mediaSession = null
         fileCb?.onReceiveValue(null); fileCb = null
         if (dlReceiverOn) { runCatching { unregisterReceiver(dlCompleteReceiver) }; dlReceiverOn = false }
+        nv.release()
         root.removeAllViews(); web.destroy(); super.onDestroy()
     }
 
