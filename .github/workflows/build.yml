@@ -9,8 +9,24 @@ jobs:
         with: { distribution: temurin, java-version: 17 }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: "8.7" }
-      - run: gradle assembleDebug
+      - name: Keystore'u hazırla
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
+      - name: Derle ve imzala
+        run: gradle assembleRelease
+        env:
+          KEYSTORE_FILE: ${{ runner.temp }}/release.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: umitlauncher
+          KEY_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
       - uses: actions/upload-artifact@v4
+        id: upload
         with:
           name: UmitTV-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/release/app-release.apk
+      - name: Özete indirme linkini yaz
+        run: |
+          echo "### 📦 APK hazır" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "[⬇️ UmitTV APK'yı indir](${{ steps.upload.outputs.artifact-url }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "İndirilen zip'in içinden app-release.apk çıkar, UmitTV.apk adıyla Alakart reposuna yükle." >> "$GITHUB_STEP_SUMMARY"
