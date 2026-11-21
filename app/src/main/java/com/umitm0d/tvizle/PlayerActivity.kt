@@ -17,6 +17,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.ProgressBar
@@ -28,6 +29,9 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.VideoSize
+import androidx.media3.common.text.CueGroup
+import androidx.media3.ui.CaptionStyleCompat
+import androidx.media3.ui.SubtitleView
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -73,6 +77,7 @@ class PlayerActivity : Activity() {
     private lateinit var playBtn: TextView
     private lateinit var modeBtn: TextView
     private lateinit var hint: TextView
+    private lateinit var subView: SubtitleView
     private var controlsVisible = false
     private var landscape = true
     private val hideRunnable = Runnable { hideControls() }
@@ -96,6 +101,13 @@ class PlayerActivity : Activity() {
         surface = SurfaceView(this)
         root.addView(surface, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
+        subView = SubtitleView(this)
+        subView.setStyle(CaptionStyleCompat(Color.WHITE, Color.TRANSPARENT, Color.TRANSPARENT,
+            CaptionStyleCompat.EDGE_TYPE_OUTLINE, Color.BLACK, null))
+        subView.setFractionalTextSize(0.0533f)
+        subView.setBottomPaddingFraction(0.12f)
+        root.addView(subView, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         spinner = ProgressBar(this)
         root.addView(spinner, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
@@ -192,8 +204,15 @@ class PlayerActivity : Activity() {
         row.addView(modeBtn)
         row.addView(makeBtn("⟳ Döndür") { rotate() })
         row.addView(makeBtn("🔊 Ses") { pickAudio() })
+        row.addView(makeBtn("CC Altyazı") { pickSubtitle() })
+        row.addView(makeBtn("HD Kalite") { pickQuality() })
+        row.addView(makeBtn("⚡ Hız") { pickSpeed() })
         row.addView(makeBtn("✕ Kapat") { finish() })
-        controls.addView(row)
+        val hs = HorizontalScrollView(this)
+        hs.isHorizontalScrollBarEnabled = false
+        hs.isFillViewport = true
+        hs.addView(row, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        controls.addView(hs)
 
         root.addView(controls, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
@@ -291,6 +310,64 @@ class PlayerActivity : Activity() {
         else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
     }
 
+    private fun showList(title: String, names: Array<String>, onPick: (Int) -> Unit) {
+        handler.removeCallbacks(hideRunnable)
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setItems(names) { _, which -> onPick(which) }
+            .setOnDismissListener { hideSystemUi(); scheduleHide() }
+            .show()
+    }
+
+    private fun trackName(f: androidx.media3.common.Format, i: Int, fallback: String): String =
+        f.label ?: f.language ?: (fallback + " " + (i + 1))
+
+    private fun pickSubtitle() {
+        val p = player ?: return
+        val groups = p.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT && it.isSupported }
+        if (groups.isEmpty()) { showHint("Altyazı yok"); return }
+        val names = arrayOf("Kapalı") + groups.mapIndexed { i, g -> trackName(g.getTrackFormat(0), i, "Altyazı") }
+        showList("Altyazı", names) { which ->
+            val b = p.trackSelectionParameters.buildUpon()
+            if (which == 0) {
+                b.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                subView.setCues(emptyList())
+            } else {
+                b.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                b.setOverrideForType(TrackSelectionOverride(groups[which - 1].mediaTrackGroup, 0))
+            }
+            p.trackSelectionParameters = b.build()
+        }
+    }
+
+    private fun pickQuality() {
+        val p = player ?: return
+        val g = p.currentTracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO && it.length > 1 }
+        if (g == null) { showHint("Tek kalite var"); return }
+        val idx = (0 until g.length).filter { g.isTrackSupported(it) }
+            .sortedByDescending { g.getTrackFormat(it).height }
+        val names = arrayOf("Otomatik") + idx.map {
+            val f = g.getTrackFormat(it)
+            f.height.toString() + "p" + (if (f.bitrate > 0) " · " + (f.bitrate / 1000) + " kbps" else "")
+        }
+        showList("Kalite", names) { which ->
+            val b = p.trackSelectionParameters.buildUpon()
+            if (which == 0) b.clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+            else b.setOverrideForType(TrackSelectionOverride(g.mediaTrackGroup, listOf(idx[which - 1])))
+            p.trackSelectionParameters = b.build()
+        }
+    }
+
+    private fun pickSpeed() {
+        val p = player ?: return
+        val speeds = floatArrayOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
+        val names = speeds.map { (if (it == it.toInt().toFloat()) it.toInt().toString() else it.toString()) + "x" }.toTypedArray()
+        showList("Oynatma hızı", names) { which ->
+            p.setPlaybackSpeed(speeds[which])
+            showHint(names[which])
+        }
+    }
+
     private fun pickAudio() {
         val p = player ?: return
         val groups = p.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO && it.isSupported }
@@ -373,6 +450,10 @@ class PlayerActivity : Activity() {
                 }
             }
 
+            override fun onCues(cueGroup: CueGroup) {
+                subView.setCues(cueGroup.cues)
+            }
+
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 if (videoSize.height > 0) {
                     videoRatio = videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height
@@ -384,6 +465,10 @@ class PlayerActivity : Activity() {
                 handleError(error)
             }
         })
+        p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+            .setPreferredAudioLanguage("tr")
+            .setPreferredTextLanguage("tr")
+            .build()
         p.setVideoSurfaceView(surface)
         val item = MediaItem.Builder().setUri(url)
         if (url.contains(".m3u8", ignoreCase = true)) item.setMimeType(MimeTypes.APPLICATION_M3U8)
