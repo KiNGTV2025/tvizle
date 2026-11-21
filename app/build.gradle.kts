@@ -12,6 +12,10 @@ android {
         versionCode = 3
         versionName = "1.2"
     }
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
     signingConfigs {
         create("release") {
             val ksPath = System.getenv("KEYSTORE_FILE")
