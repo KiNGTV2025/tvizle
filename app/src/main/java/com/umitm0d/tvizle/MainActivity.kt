@@ -51,6 +51,10 @@ class MainActivity : Activity() {
         private const val REQ_STORAGE = 4103
         /** true yapılırsa basılan her tuşun kodu ekranda gösterilir (direksiyon tuşu teşhisi için). */
         private const val SHOW_KEYCODES = false
+        /** Sayfanın çekileceği uzak adres. GitHub Pages bunu text/html olarak sunmalı (uzantısız dosyalarda
+         *  bazı sunucular "application/octet-stream" döner; o durumda WebView sayfayı HTML olarak yorumlayamaz —
+         *  gerekiyorsa dosyayı index.html adıyla barındırın ya da klasörün sonuna "/" ekleyin). */
+        private const val REMOTE_URL = "https://umitm0d.github.io/Alakart/Umitm0dTam1Ka"
     }
 
     private lateinit var web: WebView
@@ -173,8 +177,31 @@ class MainActivity : Activity() {
         setupMediaSession()
         askAudioOnce()
 
-        web.loadUrl("file:///android_asset/umittv_core.dat")
+        web.webViewClient = remoteClient()
+        web.loadUrl(REMOTE_URL)
         web.requestFocus()
+    }
+
+    /** Üzerine önceki istemciyi genişletip hata durumunda yerel yedek dosyayı yükleyen istemci. */
+    private fun remoteClient(): WebViewClient = object : WebViewClient() {
+        private var failedOnce = false
+        override fun shouldOverrideUrlLoading(v: WebView, req: WebResourceRequest): Boolean {
+            val u = req.url.toString()
+            return when {
+                u.startsWith("http://action_exit") -> { finish(); true }
+                u.startsWith("intent:") -> { openIntent(u); true }
+                u.startsWith("http:") || u.startsWith("https:") || u.startsWith("file:") ||
+                    u.startsWith("blob:") || u.startsWith("data:") || u.startsWith("about:") -> false
+                else -> { runCatching { startActivity(Intent(Intent.ACTION_VIEW, req.url)) }; true }
+            }
+        }
+        @Suppress("DEPRECATION")
+        override fun onReceivedError(v: WebView, code: Int, desc: String?, url: String?) {
+            if (failedOnce || url != REMOTE_URL) return
+            failedOnce = true
+            toast("Sunucuya ulaşılamadı, yerel kopya açılıyor")
+            v.loadUrl("file:///android_asset/umittv_core.dat")
+        }
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -224,7 +251,9 @@ class MainActivity : Activity() {
         @JavascriptInterface
         fun startListening(lang: String, interim: Boolean, maxAlt: Int) {
             runOnUiThread {
-                if (web.url?.startsWith("file:///android_asset/") != true) return@runOnUiThread
+                val u = web.url
+                val ok = u != null && (u.startsWith("file:///android_asset/") || u.startsWith(REMOTE_URL))
+                if (!ok) return@runOnUiThread
                 startSpeech(lang, interim, maxAlt)
             }
         }
