@@ -9,8 +9,8 @@ android {
         applicationId = "com.umitm0d.tvizle"
         minSdk = 21
         targetSdk = 30
-        versionCode = (project.findProperty("vcode") as String?)?.toIntOrNull() ?: 3
-        versionName = (project.findProperty("vname") as String?) ?: "1.2"
+        versionCode = (project.findProperty("vcode") as String?)?.toIntOrNull() ?: 4
+        versionName = (project.findProperty("vname") as String?) ?: "1.3"
     }
     lint {
         checkReleaseBuilds = false
@@ -42,4 +42,8 @@ android {
 }
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
+    // Kendi oynatıcımız (Televizo da ExoPlayer motorunu kullanıyor; bu açık kaynak sürümü)
+    implementation("androidx.media3:media3-exoplayer:1.3.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.3.1")
+    implementation("androidx.media3:media3-exoplayer-dash:1.3.1")
 }

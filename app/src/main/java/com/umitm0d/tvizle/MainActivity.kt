@@ -66,6 +66,8 @@ class MainActivity : Activity() {
         private const val UPDATE_MANIFEST_URL = "https://umitm0d.github.io/Alakart/umittv_update.json"
         private const val UPDATE_CHECK_MIN_GAP_MS = 6L * 60 * 60 * 1000   // en az 6 saatte bir kontrol et
         private const val REQ_INSTALL_SRC = 4104
+        /** true: sayfadaki "harici oynatıcı" butonu uygulamanın kendi ExoPlayer oynatıcısını açar. false: eski gibi sistem seçicisi. */
+        private const val USE_BUILTIN_PLAYER = true
         private val OFFLINE_HTML = """<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>body{margin:0;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -136,7 +138,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 val u = req.url.toString()
                 return when {
                     u.startsWith("http://action_exit") -> { finish(); true }       // sayfanın çıkış sinyali
-                    u.startsWith("intent:") -> { openIntent(u); true }             // harici oynatıcı (VLC/MX/Just Player)
+                    u.startsWith("intent:") -> { if (!tryBuiltinPlayer(u)) openIntent(u); true }             // harici oynatıcı (VLC/MX/Just Player)
                     u.startsWith("http:") || u.startsWith("https:") || u.startsWith("file:") ||
                         u.startsWith("blob:") || u.startsWith("data:") || u.startsWith("about:") -> false
                     else -> { runCatching { startActivity(Intent(Intent.ACTION_VIEW, req.url)) }; true }
@@ -208,7 +210,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             val u = req.url.toString()
             return when {
                 u.startsWith("http://action_exit") -> { finish(); true }
-                u.startsWith("intent:") -> { openIntent(u); true }
+                u.startsWith("intent:") -> { if (!tryBuiltinPlayer(u)) openIntent(u); true }
                 u.startsWith("http:") || u.startsWith("https:") || u.startsWith("file:") ||
                     u.startsWith("blob:") || u.startsWith("data:") || u.startsWith("about:") -> false
                 else -> { runCatching { startActivity(Intent(Intent.ACTION_VIEW, req.url)) }; true }
@@ -235,6 +237,46 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             phase = 2
             v.settings.cacheMode = WebSettings.LOAD_DEFAULT
             v.loadDataWithBaseURL(null, OFFLINE_HTML, "text/html", "UTF-8", null)
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    //  İzinler
+    // ─────────────────────────────────────────────────────────────
+    private fun hasAudioPerm(): Boolean =
+        Build.VERSION.SDK_INT < 23 ||
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    private fun requestAudioPerm() {
+        if (Build.VERSION.SDK_INT >= 23)
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_AUDIO)
+    }
+
+    /** Mikrofon iznini ilk açılışta bir kez sor, sonra her açılışta rahatsız etme. */
+    private fun askAudioOnce() {
+        val sp = getSharedPreferences("umittv", MODE_PRIVATE)
+        if (!hasAudioPerm() && !sp.getBoolean("audio_asked", false)) {
+            sp.edit().putBoolean("audio_asked", true).apply()
+            requestAudioPerm()
+        }
+    }
+
+    override fun onRequestPermissionsResult(code: Int, perms: Array<out String>, res: IntArray) {
+        super.onRequestPermissionsResult(code, perms, res)
+        val ok = res.isNotEmpty() && res[0] == PackageManager.PERMISSION_GRANTED
+        when (code) {
+            REQ_AUDIO -> {
+                pendingPermReq?.let {
+                    if (ok) it.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) else it.deny()
+                }
+                pendingPermReq = null
+                val p = pendingSpeech; pendingSpeech = null
+                if (ok) p?.invoke() else if (p != null) {
+                    toast("Mikrofon izni verilmedi – Ayarlar > Uygulamalar > ÜmitTV > İzinler")
+                    jsSR("error", JSONObject().put("error", "not-allowed")); jsSR("end")
+                }
+            }
+            REQ_STORAGE -> showDirDialog(Environment.getExternalStorageDirectory())
         }
     }
 
@@ -496,6 +538,21 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 val d = zapDirection(e.keyCode)
                 if (d != 0) zap(d > 0)
             }
+        }
+    }
+
+    /** Sayfanın "harici oynatıcı" intent'i (video/* + http/https akış) ise uygulamanın kendi oynatıcısını açar. */
+    private fun tryBuiltinPlayer(intentUrl: String): Boolean {
+        if (!USE_BUILTIN_PLAYER) return false
+        return try {
+            val i = Intent.parseUri(intentUrl, Intent.URI_INTENT_SCHEME)
+            val data = i.data?.toString() ?: return false
+            val isStream = (i.type ?: "").startsWith("video/") && i.getPackage() == null
+            if (!isStream || !(data.startsWith("http://") || data.startsWith("https://"))) return false
+            startActivity(Intent(this, PlayerActivity::class.java).putExtra(PlayerActivity.EXTRA_URL, data))
+            true
+        } catch (e: Exception) {
+            false
         }
     }
 
