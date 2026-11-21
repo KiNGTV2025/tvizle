@@ -541,7 +541,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         }
     }
 
-    /** Sayfanın "harici oynatıcı" intent'i (video/* + http/https akış) ise uygulamanın kendi oynatıcısını açar. */
+    /** Sayfanın "harici oynatıcı" intent'i (video/ (herhangi bir alt tür) + http/https akış) ise uygulamanın kendi oynatıcısını açar. */
     private fun tryBuiltinPlayer(intentUrl: String): Boolean {
         if (!USE_BUILTIN_PLAYER) return false
         return try {
