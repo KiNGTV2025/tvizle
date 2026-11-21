@@ -3,15 +3,27 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- Sesli komut / mikrofon -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+    <!-- Dosya ekleme (sadece cihazda sistem dosya seçici yoksa yedek gezgin için) -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+    <uses-feature android:name="android.hardware.microphone" android:required="false"/>
 
     <uses-feature android:name="android.software.leanback" android:required="false"/>
     <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
+
+    <!-- Android 11+: cihazdaki ses tanıma servisini görebilmek için -->
+    <queries>
+        <intent><action android:name="android.speech.RecognitionService"/></intent>
+    </queries>
 
     <application
         android:icon="@mipmap/ic_launcher"
         android:banner="@drawable/banner"
         android:label="ÜmitTV"
         android:hardwareAccelerated="true"
+        android:requestLegacyExternalStorage="true"
         android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
         <activity
