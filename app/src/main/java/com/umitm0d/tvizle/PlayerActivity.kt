@@ -40,7 +40,6 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
-import androidx.media3.extractor.ts.TsExtractor
 
 /**
  * ÜmitTV'nin kendi oynatıcısı (Media3 / ExoPlayer). Sayfadaki "harici oynatıcı" butonu bunu açar.
@@ -431,7 +430,6 @@ class PlayerActivity : Activity() {
             .setTsExtractorFlags(
                 DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or
                     DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS)
-            .setTsExtractorMode(TsExtractor.MODE_SINGLE_PROGRAM)
             .setConstantBitrateSeekingEnabled(true)
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(15000, 50000, 2000, 4000)
