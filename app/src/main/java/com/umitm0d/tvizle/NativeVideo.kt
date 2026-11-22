@@ -31,6 +31,7 @@ import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import org.json.JSONArray
@@ -88,6 +89,8 @@ class NativeVideo(
         applyFit()
     }
 
+    private var forceTex = false          // SurfaceView görüntü vermedi: bu oturumda TextureView'da kal
+    private var frameFix = 0              // görüntü gelmeme kurtarma aşaması (0: yok, 1: yüzey yeniden bağlandı, 2: TextureView)
     private var loaded = false           // bir kaynak yüklü mü (sayfa şeffaflığı / yüzey görünürlüğü için)
     private var everReady = false
     private var retries = 0
@@ -109,6 +112,8 @@ class NativeVideo(
     private var resolveGen = 0            // eski/iptal edilmiş çözümlemelerin sonucunu yok saymak için
     private var vavooSrc = ""             // sayfadan gelen özgün Vavoo adresi ("" = Vavoo değil)
     private var vavooRetried = false      // yayın hiç açılmazsa bir kez adresi yeniden çözdür
+    private var vavooMidRetries = 0       // oynarken kopmada sessiz yeniden çözme sayısı (kararlı oynayınca sıfırlanır)
+    private var readyStableAt = 0L
 
     // Görüntü gelmeme koruması: ses çalıp ilk video karesi çizilmezse (donanım dekoder sorunu) yazılım dekoderine geç
     private var preferSw = act.getSharedPreferences("umittv", android.content.Context.MODE_PRIVATE).getString("dec", "") == "sw"   // sw: yazılım dekoder öncelikli (kalıcı tercih ya da donanım hata verince otomatik)
@@ -146,7 +151,7 @@ class NativeVideo(
             .setEnableDecoderFallback(true)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
         val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(15000, 50000, 2000, 4000)   // IPTV: hızlı kanal açılışı
+            .setBufferDurationsMs(20000, 60000, 2500, 8000)   // IPTV: hızlı açılış (2,5 sn) ama takılmadan sonra 8 sn tamponla devam et
             .build()
         val p = ExoPlayer.Builder(act, renderers)
             .setLoadControl(loadControl)
@@ -156,7 +161,7 @@ class NativeVideo(
             .build()
         p.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
-                if (state == Player.STATE_READY) { everReady = true; retries = 0 }
+                if (state == Player.STATE_READY) { everReady = true; retries = 0; if (readyStableAt == 0L) readyStableAt = android.os.SystemClock.elapsedRealtime() } else if (state != Player.STATE_BUFFERING) readyStableAt = 0L
                 pushState()
             }
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) = pushState()
@@ -165,7 +170,7 @@ class NativeVideo(
                 oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) = pushState()
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 if (videoSize.height > 0) applyDisplayMode(videoSize.height)
-                if (videoSize.height >= 2000) setTexture(true) else if (videoSize.height in 1..1500) setTexture(false)
+                if (videoSize.height >= 2000) setTexture(true) else if (videoSize.height in 1..1500) setTexture(forceTex)
                 if (videoSize.height > 0) {
                     videoRatio = videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height
                     applyFit()
@@ -255,8 +260,8 @@ class NativeVideo(
     private fun buildSource(url: String, ua: String, referer: String, kind: String): androidx.media3.exoplayer.source.MediaSource {
         val http = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(15000)
-            .setReadTimeoutMs(20000)
+            .setConnectTimeoutMs(8000)
+            .setReadTimeoutMs(10000)   // 20 sn'lik takılı bağlantı tamponu bitiriyordu; kısa kes, politika yeniden denesin
             .setUserAgent(if (ua.isNotBlank()) ua else UA)
         if (referer.isNotBlank()) http.setDefaultRequestProperties(mapOf("Referer" to referer))
         // IPTV: bozuk/kesik TS akışlarını toleranslı çöz
@@ -271,7 +276,25 @@ class NativeVideo(
             kind == "hls" || low.contains(".m3u8") -> item.setMimeType(MimeTypes.APPLICATION_M3U8)
             low.contains(".mpd") -> item.setMimeType(MimeTypes.APPLICATION_MPD)
         }
+        // Canlı yayında geçici parça/liste hatası oynatıcıyı düşürmesin: 8 deneme, 1 sn aralıkla (varsayılan 3 deneme, katlanarak artan bekleme)
+        val policy = object : DefaultLoadErrorHandlingPolicy(8) {
+            override fun getRetryDelayMsFor(info: androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo): Long {
+                val ex = info.exception
+                if (ex is HttpDataSource.InvalidResponseCodeException &&
+                    (ex.responseCode == 401 || ex.responseCode == 403 || ex.responseCode == 404 || ex.responseCode == 410)) {
+                    return if (info.errorCount <= 2) 800L else C.TIME_UNSET   // token bitti/parça yok: 2 deneme sonra vazgeç, yeniden çözdürülsün
+                }
+                return 1000L.coerceAtMost(500L * info.errorCount)
+            }
+        }
+        if (low.contains(".m3u8") || kind == "hls") {
+            // canlıda canlı kenardan biraz geride dur: Vavoo parçaları geç gelince tampon boşalıp kesilmesin
+            item.setLiveConfiguration(MediaItem.LiveConfiguration.Builder()
+                .setTargetOffsetMs(10000).setMinOffsetMs(6000).setMaxOffsetMs(30000)
+                .setMinPlaybackSpeed(0.97f).setMaxPlaybackSpeed(1.03f).build())
+        }
         return DefaultMediaSourceFactory(DefaultDataSource.Factory(act, http), extractors)
+            .setLoadErrorHandlingPolicy(policy)
             .createMediaSource(item.build())
     }
 
@@ -284,7 +307,7 @@ class NativeVideo(
             return
         }
         vavooSrc = url
-        vavooRetried = false
+        vavooRetried = false; vavooMidRetries = 0
         resolveVavoo(url, gen, startMs, autoplay, kind)
     }
 
@@ -311,7 +334,7 @@ class NativeVideo(
         val p = ensurePlayer()
         curUrl = url; everReady = false; retries = 0; dropped = 0
         altTried = false; lastUa = ua; lastRef = referer; lastKind = kind
-        firstFrame = false; readySince = 0L; swTried = false; hasVideoTrack = false
+        firstFrame = false; readySince = 0L; swTried = false; hasVideoTrack = false; readyStableAt = 0L; frameFix = 0
         levelRefs = emptyList(); audioRefs = emptyList(); videoRatio = 0f
         loaded = true
         handler.removeCallbacks(retryRun)
@@ -505,6 +528,7 @@ class NativeVideo(
         if (resumeOnStart) p.playWhenReady = false
     }
     fun onHostStart() {
+        if (loaded) handler.postDelayed({ if (loaded && !firstFrame) reattachSurface() }, 400)   // ön plana dönüşte yüzey yeniden kurulmuş olabilir
         if (resumeOnStart) { player?.playWhenReady = true; resumeOnStart = false }
     }
     fun release() {
@@ -554,6 +578,7 @@ class NativeVideo(
             if (!loaded) return
             pushState()
             checkFirstFrame()
+            if (vavooMidRetries > 0 && readyStableAt != 0L && android.os.SystemClock.elapsedRealtime() - readyStableAt > 30000L) vavooMidRetries = 0
             handler.postDelayed(this, TICK_MS)
         }
     }
@@ -564,9 +589,16 @@ class NativeVideo(
         if (p.playbackState == Player.STATE_READY && p.playWhenReady) {
             val now = android.os.SystemClock.elapsedRealtime()
             if (readySince == 0L) { readySince = now; return }
-            if (now - readySince > 4500) {
+            val el = now - readySince
+            // 1. aşama (2,5 sn): ses çalıyor ama kare çizilmedi → video yüzeyini yeniden bağla (güncelleme/ön plana dönüş sonrası kopan yüzey)
+            if (frameFix == 0 && el > 2500) { frameFix = 1; reattachSurface(); return }
+            if (el > 4500) {
                 readySince = now
                 if (!swTried) { swTried = true; rebuildSoftware() }
+                else if (frameFix < 2 && !useTex) {   // 3. aşama: SurfaceView hiç görüntü vermiyor → GPU yolu (TextureView)
+                    frameFix = 2; forceTex = true; setTexture(true)
+                    send(JSONObject().put("t", "dbg").put("m", "Görüntü yüzeyi TextureView'a alındı"))
+                }
                 else if (preferSw) {
                     val f = p.videoFormat
                     send(JSONObject().put("t", "dbg").put("m", "Video çözülemedi: " + (f?.sampleMimeType ?: "?") + " " + (f?.width ?: 0) + "x" + (f?.height ?: 0)))
@@ -574,6 +606,18 @@ class NativeVideo(
                 }
             }
         } else readySince = 0L
+    }
+
+    /** Video çıkışını (SurfaceView / TextureView) oynatıcıya yeniden bağlar; yerleşimi ve görünürlüğü tazeler. */
+    private fun reattachSurface() {
+        val p = player ?: return
+        try {
+            if (useTex && tex != null) { p.clearVideoTextureView(tex); p.setVideoTextureView(tex) }
+            else { p.clearVideoSurfaceView(surface); p.setVideoSurfaceView(surface) }
+        } catch (_: Throwable) {}
+        holder.requestLayout()
+        refreshVisibility()
+        applyFit()
     }
 
     /** Donanım dekoder görüntü vermediyse: oynatıcıyı yazılım dekoder öncelikli yeniden kur, kaldığı yerden devam et. */
@@ -682,6 +726,12 @@ class NativeVideo(
         }
         if (vavooSrc.isNotEmpty() && !everReady && !vavooRetried) {   // Vavoo adresi bayatlamış olabilir: bir kez yeniden çözdür
             vavooRetried = true
+            VavooResolver.invalidate(vavooSrc)
+            resolveVavoo(vavooSrc, ++resolveGen, 0L, true, lastKind)
+            return
+        }
+        if (vavooSrc.isNotEmpty() && everReady && vavooMidRetries < 2) {   // oynarken koptu: token bitmiş olabilir → sessizce yeniden çözdür (sayfaya hata gitmez)
+            vavooMidRetries++
             VavooResolver.invalidate(vavooSrc)
             resolveVavoo(vavooSrc, ++resolveGen, 0L, true, lastKind)
             return
