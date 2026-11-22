@@ -1,5 +1,6 @@
 import java.util.Base64
 
+// Otomatik güncelleme testi: bu satır 1.7 sürümünü tetiklemek için eklendi
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")

@@ -17,15 +17,14 @@ jobs:
         with: { distribution: temurin, java-version: 17 }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: "8.13" }
-      - name: Sürüm numarasını hesapla (1.6, 1.7, 1.8, 1.9, 2.0, 2.1 ...)
+      - name: Sürümü version.txt'den oku (örn. 1.7 -> kod 17)
         id: ver
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
-          N=$(gh release list --repo "$REL_REPO" --limit 1000 | wc -l)
-          V=$((16 + N))
+          VN=$(tr -d ' \r\n' < version.txt)
+          if ! [[ "$VN" =~ ^[0-9]+\.[0-9]$ ]]; then echo "version.txt biçimi hatalı: '$VN' (örnek: 1.7)"; exit 1; fi
+          V=$(( ${VN%.*} * 10 + ${VN#*.} ))
           echo "vcode=$V" >> "$GITHUB_OUTPUT"
-          echo "vname=$((V / 10)).$((V % 10))" >> "$GITHUB_OUTPUT"
+          echo "vname=$VN" >> "$GITHUB_OUTPUT"
       - name: Keystore'u hazırla
         run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
       - name: Derle ve imzala
@@ -50,5 +49,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
+          TAG="v${{ steps.ver.outputs.vcode }}"
+          if gh release view "$TAG" --repo "$REL_REPO" >/dev/null 2>&1; then
+            echo "Release $TAG zaten var, yayınlanmadı. Yeni sürüm için version.txt'yi artır." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           cp app/build/outputs/apk/release/app-release.apk UmitTV.apk
-          gh release create "v${{ steps.ver.outputs.vcode }}" UmitTV.apk --repo "$REL_REPO" --title "${{ steps.ver.outputs.vname }}" --notes "ÜmitTV ${{ steps.ver.outputs.vname }}" --latest
+          gh release create "$TAG" UmitTV.apk --repo "$REL_REPO" --title "${{ steps.ver.outputs.vname }}" --notes "ÜmitTV ${{ steps.ver.outputs.vname }}" --latest
