@@ -84,7 +84,9 @@ class NativeVideo(
     private var vavooRetried = false      // yayın hiç açılmazsa bir kez adresi yeniden çözdür
 
     // Görüntü gelmeme koruması: ses çalıp ilk video karesi çizilmezse (donanım dekoder sorunu) yazılım dekoderine geç
-    private var preferSw = false          // bir kez gerekirse sonraki yayınlarda da yazılım dekoder öncelikli
+    private var preferSw = act.getSharedPreferences("umittv", android.content.Context.MODE_PRIVATE).getString("dec", "") == "sw"   // sw: yazılım dekoder öncelikli (kalıcı tercih ya da donanım hata verince otomatik)
+    private var decName = ""
+    private var lastDiag = ""
     private var firstFrame = false
     private var readySince = 0L
     private var swTried = false
@@ -135,6 +137,7 @@ class NativeVideo(
             override fun onPositionDiscontinuity(
                 oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) = pushState()
             override fun onVideoSizeChanged(videoSize: VideoSize) {
+                if (videoSize.height > 0) applyDisplayMode(videoSize.height)
                 if (videoSize.height > 0) {
                     videoRatio = videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height
                     applyFit()
@@ -145,12 +148,22 @@ class NativeVideo(
             override fun onRenderedFirstFrame() {
                 firstFrame = true
                 send(JSONObject().put("t", "rf"))
+                try {   // teşhis: hangi dekoder, hangi biçim/çözünürlük (sayfada kısa bildirim olarak görünür)
+                    val f = player?.videoFormat
+                    val d = (f?.sampleMimeType ?: "?").removePrefix("video/") + " " + (f?.width ?: 0) + "x" + (f?.height ?: 0) +
+                        " | " + (if (decName.isEmpty()) "?" else decName) + (if (preferSw) " [SW]" else " [HW]")
+                    if (d != lastDiag) { lastDiag = d; send(JSONObject().put("t", "dbg").put("m", d)) }
+                } catch (_: Throwable) {}
             }
             override fun onPlayerError(error: PlaybackException) = handleError(error)
         })
         p.addAnalyticsListener(object : AnalyticsListener {
             override fun onDroppedVideoFrames(eventTime: AnalyticsListener.EventTime, droppedFrames: Int, elapsedMs: Long) {
                 dropped += droppedFrames
+            }
+            override fun onVideoDecoderInitialized(eventTime: AnalyticsListener.EventTime, decoderName: String,
+                                                   initializedTimestampMs: Long, initializationDurationMs: Long) {
+                decName = decoderName
             }
         })
         p.trackSelectionParameters = applyCap(p.trackSelectionParameters.buildUpon())
@@ -253,9 +266,65 @@ class NativeVideo(
         resolveGen++
         handler.removeCallbacks(tick); handler.removeCallbacks(retryRun)
         loaded = false; everReady = false
+        restoreDisplayMode()
         player?.let { it.stop(); it.clearMediaItems() }
         levelRefs = emptyList(); audioRefs = emptyList()
         refreshVisibility()
+    }
+
+    // ───────────── 4K: ekran çıkışını 2160p'ye al ─────────────
+    // Kutu HDMI çıkışı 1080p iken 4K video küçültülerek ekrana verilir; ucuz SoC'lerde bu yol bozuk/renkli görüntü üretir.
+    // 4K video açılınca (ve ekran 4K modu destekliyorsa) çıkış modu 3840x2160'a alınır, 4K'dan çıkınca eski moda dönülür.
+    private var dispModeSet = false
+    private fun applyDisplayMode(h: Int) {
+        if (android.os.Build.VERSION.SDK_INT < 23) return
+        try {
+            val w = act.window
+            val lp = w.attributes
+            if (h >= 2000 && !dispModeSet) {
+                @Suppress("DEPRECATION")
+                val d = act.windowManager.defaultDisplay
+                val cur = d.mode
+                if (cur.physicalHeight >= 2160) return
+                val best = d.supportedModes
+                    .filter { it.physicalHeight >= 2160 && it.physicalWidth >= 3840 }
+                    .minByOrNull { Math.abs(it.refreshRate - cur.refreshRate) } ?: return
+                lp.preferredDisplayModeId = best.modeId
+                w.attributes = lp
+                dispModeSet = true
+                send(JSONObject().put("t", "dbg").put("m", "Ekran çıkışı 4K moduna alındı (" + best.physicalWidth + "x" + best.physicalHeight + ")"))
+            } else if (h in 1..1500) restoreDisplayMode()
+        } catch (_: Throwable) {}
+    }
+    private fun restoreDisplayMode() {
+        if (!dispModeSet || android.os.Build.VERSION.SDK_INT < 23) return
+        try {
+            val w = act.window
+            val lp = w.attributes
+            lp.preferredDisplayModeId = 0
+            w.attributes = lp
+        } catch (_: Throwable) {}
+        dispModeSet = false
+    }
+
+    /** Sayfadan: "sw" = yazılım dekoder öncelikli, "hw" = donanım (varsayılan). Kalıcıdır. */
+    fun setDecoder(mode: String) {
+        val sw = mode == "sw"
+        act.getSharedPreferences("umittv", android.content.Context.MODE_PRIVATE).edit().putString("dec", if (sw) "sw" else "hw").apply()
+        if (sw == preferSw) return
+        preferSw = sw
+        val old = player ?: return
+        if (!loaded) return
+        val pos = old.currentPosition
+        val live = old.isCurrentMediaItemLive
+        handler.removeCallbacks(retryRun)
+        old.release(); player = null
+        val p = ensurePlayer()
+        p.setMediaSource(buildSource(curUrl, lastUa, lastRef, lastKind))
+        if (!live && pos > 1000) p.seekTo(pos)
+        p.playWhenReady = true
+        p.prepare()
+        lastDiag = ""
     }
 
     /** Sayfadan gelen en yüksek çözünürlük sınırı (0 = varsayılan: TV'de 1080p, telefonda sınırsız). */
@@ -315,6 +384,7 @@ class NativeVideo(
     }
     fun release() {
         handler.removeCallbacksAndMessages(null)
+        restoreDisplayMode()
         player?.release(); player = null
         loaded = false
         runCatching { root.removeView(holder) }

@@ -409,6 +409,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             ui { gv.rect(i, x, y, w, h, iw, ih, show) }
         @JavascriptInterface fun level(i: Int) = ui { nv.level(i) }
         @JavascriptInterface fun maxHeight(h: Int) = ui { nv.setMaxHeight(h) }
+        @JavascriptInterface fun decoder(mode: String) = ui { nv.setDecoder(mode) }
         @JavascriptInterface fun audio(i: Int) = ui { nv.audio(i) }
         @JavascriptInterface
         fun rect(x: Double, y: Double, w: Double, h: Double, iw: Double, ih: Double, show: Boolean, fit: String) =
