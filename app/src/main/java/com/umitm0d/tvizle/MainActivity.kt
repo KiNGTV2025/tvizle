@@ -76,7 +76,8 @@ open class MainActivity : Activity() {
         /** Güncelleme bilgisini buradan okur: {"versionCode":3,"versionName":"1.2","url":"https://.../UmitTV.apk","notes":"..."} */
         private val UPDATE_MANIFEST_URL = deobf("Mi8oLS1lT04XDg0RC1cMRw0CGAUbDV4YHVw1GRccGQsOVAkQFwv099329OHn8+2n4Pjj4w==", OBF_KEY)
         private val TRUSTED_PREFIX = deobf("Mi8oLS1lT04XDg0RC1cMRw0CGAUbDV4YHVw=", OBF_KEY)
-        private const val UPDATE_CHECK_MIN_GAP_MS = 6L * 60 * 60 * 1000   // en az 6 saatte bir kontrol et
+        private const val UPDATE_CHECK_MIN_GAP_MS = 15L * 60 * 1000   // en az 15 dakikada bir kontrol et
+        private const val GITHUB_LATEST_API = "https://api.github.com/repos/KiNGTV2025/tvizle/releases/latest"
 
         // ───────── Modlamaya karşı koruma ─────────
         // 1) Yerel imza kontrolü: APK başka bir anahtarla yeniden imzalanmışsa (modlanmışsa) SHA-256 değişir.
@@ -871,30 +872,48 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         else @Suppress("DEPRECATION") packageManager.getPackageInfo(packageName, 0).versionCode
 
     /** En az UPDATE_CHECK_MIN_GAP_MS'de bir, arka plan iş parçacığında manifestoyu kontrol eder. */
+    private fun httpGet(u: String): String? {
+        val conn = (URL(u).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 8000; readTimeout = 8000; requestMethod = "GET"
+            setRequestProperty("Accept", "application/vnd.github+json")
+        }
+        return try {
+            if (conn.responseCode !in 200..299) null
+            else conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
+        } finally { conn.disconnect() }
+    }
+
+    /** Her açılışta (en az 15 dk arayla) GitHub'daki son sürüme bakar; yeniyse sormadan indirip kurulum ekranını açar. */
     private fun maybeCheckForUpdate() {
         val sp = getSharedPreferences("umittv", MODE_PRIVATE)
         val last = sp.getLong("upd_last_check", 0L)
         val now = System.currentTimeMillis()
-        if (now - last < UPDATE_CHECK_MIN_GAP_MS) return
+        if (now - last < UPDATE_CHECK_MIN_GAP_MS || pendingDownloadId != -1L) return
         sp.edit().putLong("upd_last_check", now).apply()
         Thread {
             try {
-                val conn = (URL(UPDATE_MANIFEST_URL).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 8000; readTimeout = 8000; requestMethod = "GET"
+                var remoteCode = -1
+                var url = ""
+                // 1) GitHub Releases: etiket "v<versionCode>", ek dosya UmitTV.apk
+                runCatching {
+                    val j = JSONObject(httpGet(GITHUB_LATEST_API) ?: "")
+                    remoteCode = Regex("\\d+").find(j.optString("tag_name", ""))?.value?.toIntOrNull() ?: -1
+                    val assets = j.optJSONArray("assets")
+                    if (assets != null) for (k in 0 until assets.length()) {
+                        val a = assets.getJSONObject(k)
+                        if (a.optString("name").endsWith(".apk", true)) { url = a.optString("browser_download_url"); break }
+                    }
                 }
-                val code = conn.responseCode
-                if (code !in 200..299) return@Thread
-                val body = conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
-                conn.disconnect()
-                val j = JSONObject(body)
-                val remoteCode = j.optInt("versionCode", -1)
-                val url = j.optString("url", "")
+                // 2) yedek: eski update.json
+                if (remoteCode <= 0 || url.isBlank()) {
+                    val j = JSONObject(httpGet(UPDATE_MANIFEST_URL) ?: return@Thread)
+                    remoteCode = j.optInt("versionCode", -1)
+                    url = j.optString("url", "")
+                }
                 if (remoteCode <= currentVersionCode() || url.isBlank()) return@Thread
-                val name = j.optString("versionName", "")
-                val notes = j.optString("notes", "")
-                runOnUiThread { showUpdateDialog(url, name, notes) }
+                runOnUiThread { if (!isFinishing) beginDownload(url) }
             } catch (e: Exception) {
-                // sessizce geç: ağ yok / JSON bozuk / sunucu yok — kullanıcıyı rahatsız etme
+                // sessizce geç: ağ yok / JSON bozuk / sunucu yok
             }
         }.start()
     }

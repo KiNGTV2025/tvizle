@@ -1,5 +1,10 @@
 name: Build APK
 on: [push, workflow_dispatch]
+permissions:
+  contents: write
+concurrency:
+  group: build-apk
+  cancel-in-progress: false
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -12,7 +17,7 @@ jobs:
       - name: Keystore'u hazırla
         run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
       - name: Derle ve imzala
-        run: gradle assembleRelease
+        run: gradle assembleRelease -Pvcode=$((100 + GITHUB_RUN_NUMBER)) -Pvname=1.$((GITHUB_RUN_NUMBER))
         env:
           KEYSTORE_FILE: ${{ runner.temp }}/release.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -28,3 +33,10 @@ jobs:
           echo "### 📦 APK hazır" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "[⬇️ UmitTV APK'yı indir](${{ steps.upload.outputs.artifact-url }})" >> "$GITHUB_STEP_SUMMARY"
+      - name: Release olarak yayınla (uygulama buradan otomatik günceller)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VC=$((100 + GITHUB_RUN_NUMBER))
+          cp app/build/outputs/apk/release/app-release.apk UmitTV.apk
+          gh release create "v$VC" UmitTV.apk --title "ÜmitTV 1.$GITHUB_RUN_NUMBER" --notes "Otomatik derleme" --latest
