@@ -2205,5 +2205,31 @@ document.addEventListener('click',function(e){try{
   UmitNative.checkUpdateNow();
 }catch(x){}},true);
 })();</script>
+<script id="umit-settings-top3-v1">(function(){
+/* Ayarlar: "TV kodu ile telefonu kumanda yap", "Güncellemeyi kontrol et", "Telefon kumandası (TV girişi)" her zaman en üstte (diğer betikler araya eklese bile). */
+var IDS=['umit-kumanda-pin-btn','umit-upd-check-btn','umit-remote-login-btn'],busy=false,obs=null;
+function body(){var m=document.getElementById('appSettingsModal');return m&&m.querySelector('.as-body');}
+function fix(){
+  var b=body();if(!b||busy)return;
+  var els=IDS.map(function(i){return document.getElementById(i);}).filter(Boolean);
+  if(!els.length)return;
+  var ok=els.every(function(e,i){return b.children[i]===e;});
+  if(ok)return;
+  busy=true;
+  try{for(var i=els.length-1;i>=0;i--){b.insertBefore(els[i],b.firstChild);}}catch(e){}
+  busy=false;
+}
+function watch(){
+  var b=body();if(!b)return false;
+  fix();
+  if(obs)obs.disconnect();
+  obs=new MutationObserver(function(){fix();});
+  obs.observe(b,{childList:true});
+  return true;
+}
+function start(){var n=0;(function t(){if(watch()||++n>40)return;setTimeout(t,250);})();}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+document.addEventListener('click',function(){setTimeout(fix,0);},true);
+})();</script>
 </body>
 </html>
