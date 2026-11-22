@@ -25,6 +25,7 @@ import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
@@ -46,6 +47,7 @@ import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 
 /** ÜmitTV – REMOTE_URL'deki sayfayı tam ekran WebView'de açar (sayfa APK'nın içinde gömülü değil).
  *  v1.1: mikrofon (sesli komut), dosya ekleme, direksiyon tuşlarıyla kanal değiştirme. */
@@ -75,6 +77,18 @@ open class MainActivity : Activity() {
         private val UPDATE_MANIFEST_URL = deobf("Mi8oLS1lT04XDg0RC1cMRw0CGAUbDV4YHVw1GRccGQsOVAkQFwv099329OHn8+2n4Pjj4w==", OBF_KEY)
         private val TRUSTED_PREFIX = deobf("Mi8oLS1lT04XDg0RC1cMRw0CGAUbDV4YHVw=", OBF_KEY)
         private const val UPDATE_CHECK_MIN_GAP_MS = 6L * 60 * 60 * 1000   // en az 6 saatte bir kontrol et
+
+        // ───────── Modlamaya karşı koruma ─────────
+        // 1) Yerel imza kontrolü: APK başka bir anahtarla yeniden imzalanmışsa (modlanmışsa) SHA-256 değişir.
+        // 2) Uzak kapatma anahtarı: GitHub Pages'teki küçük JSON dosyası "enabled":false derse,
+        //    APK güncellemesi yapmadan, mevcut kurulumları uzaktan kapatabilirsiniz (ör. sızan bir sürümü iptal etmek için).
+        /** Resmi imzanızın SHA-256'sı (keytool/apk imza bilgisinden alındı). Kolon yok, büyük harf. */
+        private val EXPECTED_SIG_SHA256 = deobf(
+            "amhrHhwbJCJXVSckUyJZW19ZWCwtXUIwNkMxTDVGSzhKSDpES0qxxLq7srO+tLrIvM+1u8rN0qGhpqbWp6apqg==", OBF_KEY)
+        /** GitHub Pages'teki kapatma anahtarı dosyası: {"enabled":true} ya da ayrıca {"sig":["<SHA256>",...]} ile
+         *  ek/alternatif imzalara da izin verebilirsiniz. Dosya yoksa/ağ hatasında uygulama normal açılır (kilitlenmez). */
+        private val INTEGRITY_URL = deobf(
+            "Mi8oLS1lT04XDg0RC1cMRw0CGAUbDV4YHVw1GRccGQsOVAkQFwv0993q6vHj4Prg/vKi5/3g/g==", OBF_KEY)
         private const val REQ_INSTALL_SRC = 4104
         /** true: sayfadaki "harici oynatıcı" butonu uygulamanın kendi ExoPlayer oynatıcısını açar. false: eski gibi sistem seçicisi. */
         private const val USE_BUILTIN_PLAYER = true
@@ -154,10 +168,76 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
     )
 
+    /** Uygulamayı imzalayan sertifikanın SHA-256'sı (kolonsuz, büyük harf). API 28+ ve eski cihazlar için ayrı yol. */
+    @Suppress("DEPRECATION")
+    private fun sigSha256(): String = try {
+        val sig = if (Build.VERSION.SDK_INT >= 28) {
+            val info = packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+            val si = info.signingInfo
+            val arr = if (si?.hasMultipleSigners() == true) si.apkContentsSigners else si?.signingCertificateHistory
+            arr?.firstOrNull()
+        } else {
+            packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNATURES).signatures?.firstOrNull()
+        }
+        val bytes = sig?.toByteArray() ?: return ""
+        val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+        digest.joinToString("") { "%02X".format(it) }
+    } catch (e: Exception) { "" }
+
+    /** Modlanmış/sahte kopya tespit edilince: hiçbir sayfa/köprü yüklenmeden boş ekranda uyarı gösterilir. */
+    private fun showModBlockedScreen() {
+        val tv = android.widget.TextView(this).apply {
+            text = "Bu uygulama modlanmış olduğu için çalışmamaktadır."
+            setTextColor(Color.WHITE)
+            textSize = 18f
+            gravity = Gravity.CENTER
+            setPadding(64, 0, 64, 0)
+        }
+        val layout = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+            addView(tv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
+        }
+        setContentView(layout)
+    }
+
+    /** GitHub Pages'teki kapatma anahtarını kontrol eder. Uygulama zaten normal açılmışken arka planda çalışır;
+     *  "enabled":false ya da imza izin verilenler listesinde değilse ekranı boşaltıp uyarı gösterir.
+     *  Ağ hatası/dosya yoksa SESSİZCE geçilir (kullanıcı ağ sorununda kilitlenmesin). */
+    private fun checkRemoteKillSwitch(localSig: String) {
+        Thread {
+            try {
+                val conn = (URL(INTEGRITY_URL).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 8000; readTimeout = 8000; requestMethod = "GET"
+                }
+                val code = conn.responseCode
+                if (code !in 200..299) return@Thread
+                val body = conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
+                conn.disconnect()
+                val j = JSONObject(body)
+                val enabled = j.optBoolean("enabled", true)
+                var sigOk = true
+                if (j.has("sig")) {
+                    val arr = j.optJSONArray("sig")
+                    sigOk = false
+                    if (arr != null) for (i in 0 until arr.length())
+                        if (arr.optString(i, "").equals(localSig, ignoreCase = true)) { sigOk = true; break }
+                }
+                if (!enabled || !sigOk) runOnUiThread { showModBlockedScreen() }
+            } catch (e: Exception) {
+                // ağ yok / JSON bozuk / dosya yok: sessizce geç, uygulamayı kilitleme
+            }
+        }.start()
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     @Suppress("DEPRECATION")
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
+        // Modlamaya karşı 1. kat: yerel imza kontrolü (anında, ağ gerekmez). Uyuşmazsa hiçbir şey yüklenmeden çıkılır.
+        val localSig = sigSha256()
+        if (localSig.isEmpty() || localSig != EXPECTED_SIG_SHA256) { showModBlockedScreen(); return }
+        // Modlamaya karşı 2. kat: uzak kapatma anahtarı (arka planda; sonuç gelene kadar uygulama normal açılmaya devam eder).
+        checkRemoteKillSwitch(localSig)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         web = SlopWebView(this).apply { setBackgroundColor(Color.TRANSPARENT); isFocusable = true }   // şeffaf: video arkadaki SurfaceView'den görünür
