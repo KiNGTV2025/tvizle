@@ -1,3 +1,5 @@
+import java.util.Base64
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -13,7 +15,7 @@ android {
         versionName = (project.findProperty("vname") as String?) ?: "1.5"
         // Özel releases deposunu okumak için salt-okunur token (CI secret'ından; kaynak kodda yok, APK'da gizlenmiş)
         val relTok = System.getenv("REL_READ_TOKEN") ?: ""
-        val relEnc = java.util.Base64.getEncoder().encodeToString(
+        val relEnc = Base64.getEncoder().encodeToString(
             ByteArray(relTok.length) { i -> (relTok[i].code xor ((0x5A + i) and 0xFF)).toByte() })
         buildConfigField("String", "REL_TOKEN", "\"$relEnc\"")
     }
