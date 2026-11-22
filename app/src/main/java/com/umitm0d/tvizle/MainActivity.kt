@@ -882,6 +882,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     private var updDialogShowing = false
     private var pendingApkUrl: String? = null
     private var pendingDownloadId: Long = -1L
+    private var pendingApkName: String = "UmitTV_update.apk"
     private var awaitingInstallPermission = false
     private var dlReceiverOn = false
 
@@ -1143,12 +1144,18 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     private fun enqueueApk(apkUrl: String) {
         try {
             registerDownloadReceiverIfNeeded()
+            // Önceki denemelerden kalan eski APK'lar yanlışlıkla kurulmasın
+            runCatching {
+                getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)?.listFiles()
+                    ?.filter { it.name.startsWith("UmitTV_update") }?.forEach { it.delete() }
+            }
+            pendingApkName = "UmitTV_update_" + System.currentTimeMillis() + ".apk"
             val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
             val req = DownloadManager.Request(Uri.parse(apkUrl))
                 .setTitle("ÜmitTV güncelleme")
                 .setDescription("İndiriliyor…")
                 .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                .setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, "UmitTV_update.apk")
+                .setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, pendingApkName)
                 .setAllowedOverMetered(true)
                 .setAllowedOverRoaming(true)
             pendingDownloadId = dm.enqueue(req)
@@ -1177,7 +1184,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                     val statusIdx = cur.getColumnIndex(DownloadManager.COLUMN_STATUS)
                     val status = if (statusIdx >= 0) cur.getInt(statusIdx) else -1
                     if (status == DownloadManager.STATUS_SUCCESSFUL) {
-                        val apk = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "UmitTV_update.apk")
+                        val apk = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), pendingApkName)
                         installApk(apk)
                         setUpdBusy(false)   // kurulum iptal edilirse şerit yeniden "Güncelle" olur
                     } else {
@@ -1194,6 +1201,13 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
     private fun installApk(apk: File) {
         if (!apk.exists()) { toast("Güncelleme dosyası bulunamadı"); return }
+        // Dosya gerçekten daha yeni bir ÜmitTV APK'sı mı? (bozuk/eski dosya "Uygulama yüklenmedi" hatası verir)
+        val info = runCatching { packageManager.getPackageArchiveInfo(apk.absolutePath, 0) }.getOrNull()
+        if (info == null) { toast("İndirilen dosya bozuk (" + (apk.length() / 1024) + " KB), tekrar dene"); return }
+        val newCode = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode.toInt() else @Suppress("DEPRECATION") info.versionCode
+        if (info.packageName != packageName || newCode <= currentVersionCode()) {
+            toast("İndirilen dosya eski sürüm (kod $newCode, kurulu ${currentVersionCode()}), tekrar dene"); return
+        }
         try {
             val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", apk)
             val i = Intent(Intent.ACTION_VIEW).apply {
