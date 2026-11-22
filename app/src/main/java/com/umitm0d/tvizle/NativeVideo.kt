@@ -78,6 +78,11 @@ class NativeVideo(
     private var showWanted = false
     private var resumeOnStart = false
 
+    // Vavoo: sayfanın verdiği adres Vavoo ise gerçek yayın adresine çevrilir (VavooResolver)
+    private var resolveGen = 0            // eski/iptal edilmiş çözümlemelerin sonucunu yok saymak için
+    private var vavooSrc = ""             // sayfadan gelen özgün Vavoo adresi ("" = Vavoo değil)
+    private var vavooRetried = false      // yayın hiç açılmazsa bir kez adresi yeniden çözdür
+
     // Görüntü gelmeme koruması: ses çalıp ilk video karesi çizilmezse (donanım dekoder sorunu) yazılım dekoderine geç
     private var preferSw = false          // bir kez gerekirse sonraki yayınlarda da yazılım dekoder öncelikli
     private var firstFrame = false
@@ -184,6 +189,37 @@ class NativeVideo(
 
     // ───────────── Sayfadan gelen komutlar (hepsi ana iş parçacığında çağrılır) ─────────────
     fun load(url: String, ua: String, referer: String, startMs: Long, autoplay: Boolean, kind: String) {
+        val gen = ++resolveGen
+        if (!VavooResolver.matches(url)) {
+            vavooSrc = ""
+            loadResolved(url, ua, referer, startMs, autoplay, kind)
+            return
+        }
+        vavooSrc = url
+        vavooRetried = false
+        resolveVavoo(url, gen, startMs, autoplay, kind)
+    }
+
+    /** Vavoo adresini (önbellekten ya da arka planda) çözer, sonra normal yükleme yoluna girer. */
+    private fun resolveVavoo(src: String, gen: Int, startMs: Long, autoplay: Boolean, kind: String) {
+        VavooResolver.cached(src)?.let {
+            loadResolved(it, VavooResolver.UA_APP, VavooResolver.REFERER, startMs, autoplay, kind)
+            return
+        }
+        VavooResolver.resolveAsync(src) { r ->
+            handler.post {
+                if (gen != resolveGen) return@post          // bu arada başka kanal / durdur
+                if (r != null) {
+                    loadResolved(r, VavooResolver.UA_APP, VavooResolver.REFERER, startMs, autoplay, kind)
+                } else {
+                    send(JSONObject().put("t", "er").put("cat", "net").put("c", 0).put("hc", 0)
+                        .put("m", "VAVOO_RESOLVE"))
+                }
+            }
+        }
+    }
+
+    private fun loadResolved(url: String, ua: String, referer: String, startMs: Long, autoplay: Boolean, kind: String) {
         val p = ensurePlayer()
         curUrl = url; everReady = false; retries = 0; dropped = 0
         altTried = false; lastUa = ua; lastRef = referer; lastKind = kind
@@ -214,6 +250,7 @@ class NativeVideo(
     }
 
     fun stop() {
+        resolveGen++
         handler.removeCallbacks(tick); handler.removeCallbacks(retryRun)
         loaded = false; everReady = false
         player?.let { it.stop(); it.clearMediaItems() }
@@ -435,6 +472,12 @@ class NativeVideo(
         val p = player ?: return
         if (e.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {   // canlı yayında geride kaldı → canlıya dön
             p.seekToDefaultPosition(); p.prepare(); return
+        }
+        if (vavooSrc.isNotEmpty() && !everReady && !vavooRetried) {   // Vavoo adresi bayatlamış olabilir: bir kez yeniden çözdür
+            vavooRetried = true
+            VavooResolver.invalidate(vavooSrc)
+            resolveVavoo(vavooSrc, ++resolveGen, 0L, true, lastKind)
+            return
         }
         if (everReady && retries < MAX_SILENT_RETRIES) {          // yayın oynarken koptu: sayfaya hata dönmeden yeniden dene
             retries++

@@ -66,6 +66,8 @@ class PlayerActivity : Activity() {
     private var referer = ""
     private var retries = 0
     private var videoRatio = 0f
+    private var resolving = false          // Vavoo adresi çözülüyor mu
+    private var vavooRetried = false
 
     private val modeNames = arrayOf("Sığdır", "Doldur (kırp)", "Uzat", "16:9", "4:3")
     private var mode = 0
@@ -280,6 +282,7 @@ class PlayerActivity : Activity() {
     }
 
     private fun togglePlay() {
+        if (player == null) { msg.visibility = View.GONE; startPlayer(); return }
         val p = player ?: return
         if (p.playerError != null) {
             retries = 0
@@ -426,12 +429,35 @@ class PlayerActivity : Activity() {
 
     private fun startPlayer() {
         if (player != null) return
+        if (!VavooResolver.matches(url)) { beginPlayback(url, customUa, referer); return }
+        // Vavoo adresi: önce gerçek yayın adresine çevir
+        VavooResolver.cached(url)?.let { beginPlayback(it, VavooResolver.UA_APP, VavooResolver.REFERER); return }
+        if (resolving) return
+        resolving = true
+        spinner.visibility = View.VISIBLE
+        val src = url
+        VavooResolver.resolveAsync(src) { r ->
+            handler.post {
+                resolving = false
+                if (isFinishing || player != null) return@post
+                if (r != null) beginPlayback(r, VavooResolver.UA_APP, VavooResolver.REFERER)
+                else {
+                    spinner.visibility = View.GONE
+                    msg.text = "Vavoo adresi çözülemedi\nTekrar denemek için OK'a bas, çıkmak için Geri."
+                    msg.visibility = View.VISIBLE
+                }
+            }
+        }
+    }
+
+    private fun beginPlayback(playUrl: String, ua: String, ref: String) {
+        if (player != null) return
         val http = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(15000)
             .setReadTimeoutMs(20000)
-            .setUserAgent(if (customUa.isNotBlank()) customUa else UA)
-        if (referer.isNotBlank()) http.setDefaultRequestProperties(mapOf("Referer" to referer))
+            .setUserAgent(if (ua.isNotBlank()) ua else UA)
+        if (ref.isNotBlank()) http.setDefaultRequestProperties(mapOf("Referer" to ref))
         val renderers = DefaultRenderersFactory(this)
             .setEnableDecoderFallback(true)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
@@ -478,8 +504,8 @@ class PlayerActivity : Activity() {
             .setPreferredTextLanguage("tr")
             .build()
         p.setVideoSurfaceView(surface)
-        val item = MediaItem.Builder().setUri(url)
-        if (url.contains(".m3u8", ignoreCase = true)) item.setMimeType(MimeTypes.APPLICATION_M3U8)
+        val item = MediaItem.Builder().setUri(playUrl)
+        if (playUrl.contains(".m3u8", ignoreCase = true)) item.setMimeType(MimeTypes.APPLICATION_M3U8)
         p.setMediaItem(item.build())
         p.playWhenReady = true
         p.prepare()
@@ -487,12 +513,20 @@ class PlayerActivity : Activity() {
     }
 
     private fun releasePlayer() {
+        resolving = false
         handler.removeCallbacksAndMessages(null)
         player?.release()
         player = null
     }
 
     private fun handleError(e: PlaybackException) {
+        if (!vavooRetried && VavooResolver.matches(url) && retries == 0 && player?.let { it.currentPosition <= 0L } != false) {
+            vavooRetried = true
+            VavooResolver.invalidate(url)
+            releasePlayer()
+            startPlayer()
+            return
+        }
         if (retries < 3) {
             retries++
             msg.text = "Bağlantı koptu, yeniden deneniyor ($retries/3)…"
