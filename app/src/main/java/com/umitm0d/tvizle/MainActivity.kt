@@ -649,7 +649,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             return
         }
         if (req == REQ_INSTALL_SRC) {
-            checkPendingInstallResume()   // ayrıca onResume'da da denenir; burada daha hızlı tepki
+            checkPendingInstallResume(fromResult = true)
             return
         }
         @Suppress("DEPRECATION")
@@ -725,6 +725,22 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {
         if (SHOW_KEYCODES && e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0)
             toast("Tuş kodu: ${e.keyCode} (${KeyEvent.keyCodeToString(e.keyCode)})")
+        // Güncelleme şeridi odaktayken kumanda şeridi yönetir (sol/sağ: düğmeler, geri: kapat)
+        val ub = updBanner
+        if (ub != null && ub.hasFocus()) {
+            when (e.keyCode) {
+                KeyEvent.KEYCODE_BACK -> { if (e.action == KeyEvent.ACTION_UP) closeUpdateBanner(true); return true }
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> return true
+                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                    if (e.action == KeyEvent.ACTION_DOWN) {
+                        val i = updFocusables.indexOf(ub.findFocus())
+                        val n = if (e.keyCode == KeyEvent.KEYCODE_DPAD_LEFT) i - 1 else i + 1
+                        updFocusables.getOrNull(n)?.requestFocus()
+                    }
+                    return true
+                }
+            }
+        }
         val dir = zapDirection(e.keyCode)
         if (dir != 0) {
             if (e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0) zap(dir > 0)
@@ -840,6 +856,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         }
         maybeCheckForUpdate()
         checkPendingInstallResume()
+        ensureUpdBanner()
     }
 
     override fun onPause() {
@@ -927,12 +944,39 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     }
 
     private var updBanner: android.view.View? = null
+    private var updBtn: android.widget.TextView? = null
+    private var updBusy = false
+    private var updLabel = "Güncelle"
+    private var updFocusables: List<android.view.View> = emptyList()
+    private class UpdArgs(val url: String, val ver: String, val size: Long, val notes: String, val code: Int)
+    private var updArgs: UpdArgs? = null
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
-    /** Nuvio tarzı üst şerit: sürüm • boyut, "Güncelleme var", bilgi (i), Güncelle, kapat (X). */
+    private fun setUpdBusy(busy: Boolean, label: String = "Güncelle") {
+        updBusy = busy; updLabel = label
+        updBtn?.text = label
+    }
+
+    /** Şeridi kapatır; dismiss=true ise bu sürüm için bir daha gösterilmez. Odağı sayfaya geri verir. */
+    private fun closeUpdateBanner(dismiss: Boolean) {
+        if (dismiss) updArgs?.let { getSharedPreferences("umittv", MODE_PRIVATE).edit().putInt("upd_dismissed", it.code).apply() }
+        (updBanner?.parent as? ViewGroup)?.removeView(updBanner)
+        updBanner = null; updBtn = null; updFocusables = emptyList()
+        updBusy = false; updLabel = "Güncelle"; updArgs = null
+        web.requestFocus()
+    }
+
+    /** Şerit bir şekilde sökülmüşse (ör. izin ekranından dönüşte) ve güncelleme sürüyorsa yeniden kurar. */
+    private fun ensureUpdBanner() {
+        val a = updArgs ?: return
+        if (updBanner == null) showUpdateBanner(a.url, a.ver, a.size, a.notes, a.code)
+    }
+
+    /** Nuvio tarzı üst şerit: sürüm • boyut, "Güncelleme var", bilgi (i), Güncelle, kapat (X). Kumanda ile kullanılır. */
     private fun showUpdateBanner(apkUrl: String, versionName: String, sizeBytes: Long, notes: String, code: Int) {
         if (updBanner != null || isFinishing) return
+        updArgs = UpdArgs(apkUrl, versionName, sizeBytes, notes, code)
         val ver = versionName.trim().removePrefix("ÜmitTV").trim().ifBlank { "yeni sürüm" }
         val title = buildString {
             append(if (ver.firstOrNull()?.isDigit() == true) "v$ver" else ver)
@@ -956,8 +1000,18 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             text = "Güncelleme var"; setTextColor(Color.parseColor("#B8BCC6")); textSize = 13f
         })
         bar.addView(texts, android.widget.LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        fun close() { (updBanner?.parent as? ViewGroup)?.removeView(updBanner); updBanner = null }
-        bar.addView(android.widget.TextView(this).apply {
+
+        // Kumanda odağı: odaklanan düğme belirgin çerçeve alır
+        fun styleFocus(v: android.view.View, normal: Int, focused: Int, radius: Int) {
+            fun bg(c: Int, stroke: Boolean) = android.graphics.drawable.GradientDrawable().apply {
+                setColor(c); cornerRadius = dp(radius).toFloat()
+                if (stroke) setStroke(dp(2), Color.WHITE)
+            }
+            v.background = bg(normal, false)
+            v.setOnFocusChangeListener { _, f -> v.background = bg(if (f) focused else normal, f) }
+        }
+
+        val infoBtn = android.widget.TextView(this).apply {
             text = "ⓘ"; setTextColor(Color.WHITE); textSize = 22f; gravity = Gravity.CENTER
             setPadding(dp(10), dp(4), dp(10), dp(4)); isFocusable = true; isClickable = true
             setOnClickListener {
@@ -965,27 +1019,39 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                     .setMessage(if (notes.isNotBlank()) notes else "Uygulamanın yeni bir sürümü hazır.")
                     .setPositiveButton("Tamam", null).show()
             }
-        })
-        bar.addView(android.widget.TextView(this).apply {
-            text = "Güncelle"; setTextColor(Color.BLACK); textSize = 15f; gravity = Gravity.CENTER
+        }
+        styleFocus(infoBtn, Color.TRANSPARENT, Color.parseColor("#66FFFFFF"), 20)
+        bar.addView(infoBtn)
+
+        val updateBtn = android.widget.TextView(this).apply {
+            text = updLabel; setTextColor(Color.BLACK); textSize = 15f; gravity = Gravity.CENTER
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setPadding(dp(18), dp(10), dp(18), dp(10)); isFocusable = true; isClickable = true
-            background = android.graphics.drawable.GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = dp(22).toFloat() }
-            setOnClickListener { close(); beginDownload(apkUrl) }
-        }, android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(4) })
-        bar.addView(android.widget.TextView(this).apply {
+            setOnClickListener {
+                if (updBusy) { toast("Güncelleme zaten sürüyor…"); return@setOnClickListener }
+                // Şerit kapanmaz: izin ekranına gidip dönünce de yerinde kalır
+                setUpdBusy(true, "Hazırlanıyor…")
+                beginDownload(apkUrl)
+            }
+        }
+        styleFocus(updateBtn, Color.WHITE, Color.parseColor("#F97316"), 22)
+        bar.addView(updateBtn, android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(4) })
+
+        val closeBtn = android.widget.TextView(this).apply {
             text = "✕"; setTextColor(Color.WHITE); textSize = 20f; gravity = Gravity.CENTER
             setPadding(dp(12), dp(4), dp(12), dp(4)); isFocusable = true; isClickable = true
-            setOnClickListener {
-                getSharedPreferences("umittv", MODE_PRIVATE).edit().putInt("upd_dismissed", code).apply()
-                close()
-            }
-        })
+            setOnClickListener { closeUpdateBanner(true) }
+        }
+        styleFocus(closeBtn, Color.TRANSPARENT, Color.parseColor("#66FFFFFF"), 20)
+        bar.addView(closeBtn)
+
         val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP)
             .apply { setMargins(dp(10), sbH + dp(6), dp(10), 0) }
-        updBanner = bar
+        updBanner = bar; updBtn = updateBtn
+        updFocusables = listOf(infoBtn, updateBtn, closeBtn)
         root.addView(bar, lp)
         bar.bringToFront()
+        updateBtn.requestFocus()   // kumandayla açılışta "Güncelle" düğmesi seçili gelir
     }
 
     private fun showUpdateDialog(apkUrl: String, versionName: String, notes: String) {
@@ -1012,6 +1078,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             // Android 8+: "Bilinmeyen kaynaklar" izni bu uygulama için ayrıca açılmalı
             pendingApkUrl = apkUrl
             awaitingInstallPermission = true
+            setUpdBusy(true, "İzin bekleniyor…")
             toast("Kurulum için bir sonraki ekranda ÜmitTV'ye izin ver")
             try {
                 val i = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
@@ -1024,12 +1091,20 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         startApkDownload(apkUrl)
     }
 
-    /** Ayarlar ekranından dönünce izin verildiyse indirmeye devam et. */
-    private fun checkPendingInstallResume() {
-        if (awaitingInstallPermission && canInstallUnknown()) {
-            awaitingInstallPermission = false
-            pendingApkUrl?.let { startApkDownload(it) }
-            pendingApkUrl = null
+    /** Ayarlar ekranından dönünce: izin verildiyse indirmeye devam et, verilmediyse şerit yerinde kalır. */
+    private fun checkPendingInstallResume(fromResult: Boolean = false) {
+        if (!awaitingInstallPermission) return
+        val granted = canInstallUnknown()
+        if (!granted && !fromResult) return          // izin ekranı hâlâ açık olabilir; sonucu bekle
+        awaitingInstallPermission = false
+        val u = pendingApkUrl; pendingApkUrl = null
+        ensureUpdBanner()
+        if (granted && u != null) {
+            setUpdBusy(true, "İndiriliyor…")
+            startApkDownload(u)
+        } else {
+            setUpdBusy(false)
+            toast("Kurulum izni verilmedi. Güncellemek için izin vermen gerekiyor.")
         }
     }
 
@@ -1049,7 +1124,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 c.disconnect()
             } catch (e: Exception) { }
             runOnUiThread {
-                if (signed.isNullOrBlank()) toast("Güncelleme adresi alınamadı") else enqueueApk(signed!!)
+                if (signed.isNullOrBlank()) { setUpdBusy(false); toast("Güncelleme adresi alınamadı") } else enqueueApk(signed!!)
             }
         }.start()
     }
@@ -1068,6 +1143,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             pendingDownloadId = dm.enqueue(req)
             toast("Güncelleme indiriliyor, bitince kurulum ekranı açılacak")
         } catch (e: Exception) {
+            setUpdBusy(false)
             toast("İndirme başlatılamadı: ${e.message}")
         }
     }
@@ -1092,7 +1168,9 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                     if (status == DownloadManager.STATUS_SUCCESSFUL) {
                         val apk = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "UmitTV_update.apk")
                         installApk(apk)
+                        setUpdBusy(false)   // kurulum iptal edilirse şerit yeniden "Güncelle" olur
                     } else {
+                        setUpdBusy(false)
                         toast("Güncelleme indirilemedi, tekrar dener misin?")
                     }
                 }
