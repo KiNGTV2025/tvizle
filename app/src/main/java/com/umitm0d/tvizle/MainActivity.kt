@@ -57,13 +57,22 @@ class MainActivity : Activity() {
         private const val REQ_STORAGE = 4103
         /** true yapılırsa basılan her tuşun kodu ekranda gösterilir (direksiyon tuşu teşhisi için). */
         private const val SHOW_KEYCODES = false
+        /** APK içinde düz metin olarak görünmesin diye XOR+Base64 ile gizlenmiş adresler; açılımı deobf() yapar. */
+        private fun deobf(s: String, k: Int): String {
+            val raw = android.util.Base64.decode(s, android.util.Base64.NO_WRAP)
+            val out = ByteArray(raw.size)
+            for (i in raw.indices) out[i] = (raw[i].toInt() xor ((k + i) and 0xFF)).toByte()
+            return String(out, Charsets.UTF_8)
+        }
+        private const val OBF_KEY = 0x5A
         /** Sayfanın çekileceği uzak adres. GitHub Pages bunu text/html olarak sunmalı (uzantısız dosyalarda
          *  bazı sunucular "application/octet-stream" döner; o durumda WebView sayfayı HTML olarak yorumlayamaz —
          *  gerekiyorsa dosyayı index.html adıyla barındırın ya da klasörün sonuna "/" ekleyin). */
-        private const val REMOTE_URL = "https://umitm0d.github.io/Alakart/Umitm0dTam1Ka"
+        private val REMOTE_URL = deobf("Mi8oLS1lT04XDg0RC1cMRw0CGAUbDV4YHVw1GRccGQsOVCkQFwvtsebX5ei3zOk=", OBF_KEY)
 
         /** Güncelleme bilgisini buradan okur: {"versionCode":3,"versionName":"1.2","url":"https://.../UmitTV.apk","notes":"..."} */
-        private const val UPDATE_MANIFEST_URL = "https://umitm0d.github.io/Alakart/umittv_update.json"
+        private val UPDATE_MANIFEST_URL = deobf("Mi8oLS1lT04XDg0RC1cMRw0CGAUbDV4YHVw1GRccGQsOVAkQFwv099329OHn8+2n4Pjj4w==", OBF_KEY)
+        private val TRUSTED_PREFIX = deobf("Mi8oLS1lT04XDg0RC1cMRw0CGAUbDV4YHVw=", OBF_KEY)
         private const val UPDATE_CHECK_MIN_GAP_MS = 6L * 60 * 60 * 1000   // en az 6 saatte bir kontrol et
         private const val REQ_INSTALL_SRC = 4104
         /** true: sayfadaki "harici oynatıcı" butonu uygulamanın kendi ExoPlayer oynatıcısını açar. false: eski gibi sistem seçicisi. */
@@ -335,7 +344,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     /** Sayfadaki umit_native_video.js bunu window.UmitVideo olarak görür. Tüm çağrılar ana iş parçacığına alınır
      *  ve yalnızca REMOTE_URL sayfasından kabul edilir. */
     inner class VideoBridge {
-        private fun trusted(): Boolean { val u = web.url; return u != null && (u.startsWith(REMOTE_URL) || u.startsWith("https://umitm0d.github.io/")) }
+        private fun trusted(): Boolean { val u = web.url; return u != null && (u.startsWith(REMOTE_URL) || u.startsWith(TRUSTED_PREFIX)) }
         private fun ui(f: () -> Unit) = runOnUiThread { if (trusted()) f() }
 
         @JavascriptInterface
