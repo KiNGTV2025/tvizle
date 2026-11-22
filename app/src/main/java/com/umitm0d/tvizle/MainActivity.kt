@@ -77,7 +77,8 @@ open class MainActivity : Activity() {
         private val UPDATE_MANIFEST_URL = deobf("Mi8oLS1lT04XDg0RC1cMRw0CGAUbDV4YHVw1GRccGQsOVAkQFwv099329OHn8+2n4Pjj4w==", OBF_KEY)
         private val TRUSTED_PREFIX = deobf("Mi8oLS1lT04XDg0RC1cMRw0CGAUbDV4YHVw=", OBF_KEY)
         private const val UPDATE_CHECK_MIN_GAP_MS = 15L * 60 * 1000   // en az 15 dakikada bir kontrol et
-        private const val GITHUB_LATEST_API = "https://api.github.com/repos/KiNGTV2025/tvizle/releases/latest"
+        private val REL_TOKEN: String by lazy { if (BuildConfig.REL_TOKEN.isBlank()) "" else deobf(BuildConfig.REL_TOKEN, OBF_KEY) }
+        private const val GITHUB_LATEST_API = "https://api.github.com/repos/KiNGTV2025/tvizle-releases/releases/latest"
 
         // ───────── Modlamaya karşı koruma ─────────
         // 1) Yerel imza kontrolü: APK başka bir anahtarla yeniden imzalanmışsa (modlanmışsa) SHA-256 değişir.
@@ -876,6 +877,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         val conn = (URL(u).openConnection() as HttpURLConnection).apply {
             connectTimeout = 8000; readTimeout = 8000; requestMethod = "GET"
             setRequestProperty("Accept", "application/vnd.github+json")
+            if (REL_TOKEN.isNotBlank() && u.startsWith("https://api.github.com/")) setRequestProperty("Authorization", "Bearer $REL_TOKEN")
         }
         return try {
             if (conn.responseCode !in 200..299) null
@@ -904,7 +906,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                     val assets = j.optJSONArray("assets")
                     if (assets != null) for (k in 0 until assets.length()) {
                         val a = assets.getJSONObject(k)
-                        if (a.optString("name").endsWith(".apk", true)) { url = a.optString("browser_download_url"); sizeB = a.optLong("size"); break }
+                        if (a.optString("name").endsWith(".apk", true)) { url = a.optString("url"); sizeB = a.optLong("size"); break }
                     }
                 }
                 // 2) yedek: eski update.json
@@ -1031,7 +1033,28 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         }
     }
 
+    /** Özel depodaki APK: token ile asset adresine gidip kısa ömürlü imzalı indirme adresini alır, DownloadManager'a onu verir. */
     private fun startApkDownload(apkUrl: String) {
+        if (!apkUrl.startsWith("https://api.github.com/")) { enqueueApk(apkUrl); return }
+        toast("Güncelleme hazırlanıyor…")
+        Thread {
+            var signed: String? = null
+            try {
+                val c = (URL(apkUrl).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 10000; readTimeout = 10000; instanceFollowRedirects = false
+                    setRequestProperty("Accept", "application/octet-stream")
+                    if (REL_TOKEN.isNotBlank()) setRequestProperty("Authorization", "Bearer $REL_TOKEN")
+                }
+                if (c.responseCode in 300..399) signed = c.getHeaderField("Location")
+                c.disconnect()
+            } catch (e: Exception) { }
+            runOnUiThread {
+                if (signed.isNullOrBlank()) toast("Güncelleme adresi alınamadı") else enqueueApk(signed!!)
+            }
+        }.start()
+    }
+
+    private fun enqueueApk(apkUrl: String) {
         try {
             registerDownloadReceiverIfNeeded()
             val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager

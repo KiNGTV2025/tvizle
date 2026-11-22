@@ -11,7 +11,13 @@ android {
         targetSdk = 30
         versionCode = (project.findProperty("vcode") as String?)?.toIntOrNull() ?: 6
         versionName = (project.findProperty("vname") as String?) ?: "1.5"
+        // Özel releases deposunu okumak için salt-okunur token (CI secret'ından; kaynak kodda yok, APK'da gizlenmiş)
+        val relTok = System.getenv("REL_READ_TOKEN") ?: ""
+        val relEnc = java.util.Base64.getEncoder().encodeToString(
+            ByteArray(relTok.length) { i -> (relTok[i].code xor ((0x5A + i) and 0xFF)).toByte() })
+        buildConfigField("String", "REL_TOKEN", "\"$relEnc\"")
     }
+    buildFeatures { buildConfig = true }
     lint {
         checkReleaseBuilds = false
         abortOnError = false

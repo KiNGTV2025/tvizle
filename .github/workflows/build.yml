@@ -1,7 +1,10 @@
 name: Build APK
 on: [push, workflow_dispatch]
 permissions:
-  contents: write
+  contents: read
+env:
+  # APK'ların yayınlandığı PUBLIC depo (kaynak kod deposu özel kalır)
+  REL_REPO: KiNGTV2025/tvizle-releases
 concurrency:
   group: build-apk
   cancel-in-progress: false
@@ -17,9 +20,9 @@ jobs:
       - name: Sürüm numarasını hesapla (1.6, 1.7, 1.8, 1.9, 2.0, 2.1 ...)
         id: ver
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
-          N=$(gh release list --limit 1000 | wc -l)
+          N=$(gh release list --repo "$REL_REPO" --limit 1000 | wc -l)
           V=$((16 + N))
           echo "vcode=$V" >> "$GITHUB_OUTPUT"
           echo "vname=$((V / 10)).$((V % 10))" >> "$GITHUB_OUTPUT"
@@ -29,6 +32,7 @@ jobs:
         run: gradle assembleRelease -Pvcode=${{ steps.ver.outputs.vcode }} -Pvname=${{ steps.ver.outputs.vname }}
         env:
           KEYSTORE_FILE: ${{ runner.temp }}/release.jks
+          REL_READ_TOKEN: ${{ secrets.REL_READ_TOKEN }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: umitlauncher
           KEY_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -44,7 +48,7 @@ jobs:
           echo "[⬇️ UmitTV APK'yı indir](${{ steps.upload.outputs.artifact-url }})" >> "$GITHUB_STEP_SUMMARY"
       - name: Release olarak yayınla (uygulama buradan otomatik günceller)
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           cp app/build/outputs/apk/release/app-release.apk UmitTV.apk
-          gh release create "v${{ steps.ver.outputs.vcode }}" UmitTV.apk --title "${{ steps.ver.outputs.vname }}" --notes "ÜmitTV ${{ steps.ver.outputs.vname }}" --latest
+          gh release create "v${{ steps.ver.outputs.vcode }}" UmitTV.apk --repo "$REL_REPO" --title "${{ steps.ver.outputs.vname }}" --notes "ÜmitTV ${{ steps.ver.outputs.vname }}" --latest
