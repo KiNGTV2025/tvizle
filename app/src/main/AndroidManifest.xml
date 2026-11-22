@@ -6,6 +6,10 @@
     <!-- Sesli komut / mikrofon -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+    <!-- Telefon kumandası: QR kod tarama -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false"/>
     <!-- Dosya ekleme (sadece cihazda sistem dosya seçici yoksa yedek gezgin için) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
     <!-- Uygulama içi güncelleme: yeni sürümü indirip kurabilmek için -->

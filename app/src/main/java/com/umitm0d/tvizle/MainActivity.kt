@@ -55,6 +55,7 @@ open class MainActivity : Activity() {
         private const val REQ_FILE = 4101
         private const val REQ_AUDIO = 4102
         private const val REQ_STORAGE = 4103
+        private const val REQ_WEB_MEDIA = 4104
         /** true yapılırsa basılan her tuşun kodu ekranda gösterilir (direksiyon tuşu teşhisi için). */
         private const val SHOW_KEYCODES = false
         /** APK içinde düz metin olarak görünmesin diye XOR+Base64 ile gizlenmiş adresler; açılımı deobf() yapar. */
@@ -215,16 +216,32 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 web.requestFocus()
             }
 
-            /** getUserMedia vb. mikrofon istekleri */
+            /** getUserMedia: mikrofon (sesli arama) ve kamera (kumanda QR tarama) istekleri */
             override fun onPermissionRequest(request: PermissionRequest) {
                 val wantsAudio = request.resources.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)
-                if (!wantsAudio) { request.deny(); return }
-                if (hasAudioPerm()) {
-                    request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
+                val wantsVideo = request.resources.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+                if (!wantsAudio && !wantsVideo) { request.deny(); return }
+                if (!wantsVideo) {
+                    // yalnızca mikrofon: eski akış
+                    if (hasAudioPerm()) {
+                        request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
+                    } else {
+                        pendingPermReq?.deny()
+                        pendingPermReq = request
+                        requestAudioPerm()
+                    }
+                    return
+                }
+                val need = ArrayList<String>()
+                if (!hasCameraPerm()) need.add(Manifest.permission.CAMERA)
+                if (wantsAudio && !hasAudioPerm()) need.add(Manifest.permission.RECORD_AUDIO)
+                if (need.isEmpty()) {
+                    request.grant(grantable(request))
                 } else {
                     pendingPermReq?.deny()
                     pendingPermReq = request
-                    requestAudioPerm()
+                    if (Build.VERSION.SDK_INT >= 23) requestPermissions(need.toTypedArray(), REQ_WEB_MEDIA)
+                    else request.grant(grantable(request))
                 }
             }
 
@@ -307,6 +324,16 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         Build.VERSION.SDK_INT < 23 ||
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
+    private fun hasCameraPerm(): Boolean =
+        Build.VERSION.SDK_INT < 23 ||
+            checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+
+    /** İstenen kaynaklardan, Android izni verilmiş olanları döndürür. */
+    private fun grantable(r: PermissionRequest): Array<String> = r.resources.filter {
+        (it == PermissionRequest.RESOURCE_VIDEO_CAPTURE && hasCameraPerm()) ||
+            (it == PermissionRequest.RESOURCE_AUDIO_CAPTURE && hasAudioPerm())
+    }.toTypedArray()
+
     private fun requestAudioPerm() {
         if (Build.VERSION.SDK_INT >= 23)
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_AUDIO)
@@ -335,6 +362,15 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                     toast("Mikrofon izni verilmedi – Ayarlar > Uygulamalar > ÜmitTV > İzinler")
                     jsSR("error", JSONObject().put("error", "not-allowed")); jsSR("end")
                 }
+            }
+            REQ_WEB_MEDIA -> {
+                pendingPermReq?.let {
+                    val g = grantable(it)
+                    if (g.isNotEmpty()) it.grant(g) else it.deny()
+                    if (!hasCameraPerm() && it.resources.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE))
+                        toast("Kamera izni verilmedi – Ayarlar > Uygulamalar > ÜmitTV > İzinler")
+                }
+                pendingPermReq = null
             }
             REQ_STORAGE -> showDirDialog(Environment.getExternalStorageDirectory())
         }
@@ -372,6 +408,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         fun gRect(i: Int, x: Double, y: Double, w: Double, h: Double, iw: Double, ih: Double, show: Boolean) =
             ui { gv.rect(i, x, y, w, h, iw, ih, show) }
         @JavascriptInterface fun level(i: Int) = ui { nv.level(i) }
+        @JavascriptInterface fun maxHeight(h: Int) = ui { nv.setMaxHeight(h) }
         @JavascriptInterface fun audio(i: Int) = ui { nv.audio(i) }
         @JavascriptInterface
         fun rect(x: Double, y: Double, w: Double, h: Double, iw: Double, ih: Double, show: Boolean, fit: String) =

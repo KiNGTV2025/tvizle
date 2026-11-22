@@ -458,7 +458,7 @@ class PlayerActivity : Activity() {
             .setReadTimeoutMs(20000)
             .setUserAgent(if (ua.isNotBlank()) ua else UA)
         if (ref.isNotBlank()) http.setDefaultRequestProperties(mapOf("Referer" to ref))
-        val renderers = DefaultRenderersFactory(this)
+        val renderers = DecoderTweaks.renderers(this)
             .setEnableDecoderFallback(true)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
         // IPTV için: bozuk/kesik TS akışlarını daha toleranslı çöz, hızlı kanal açılışı
@@ -499,7 +499,7 @@ class PlayerActivity : Activity() {
                 handleError(error)
             }
         })
-        p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+        p.trackSelectionParameters = DecoderTweaks.cap(this, p.trackSelectionParameters.buildUpon())
             .setPreferredAudioLanguage("tr")
             .setPreferredTextLanguage("tr")
             .build()

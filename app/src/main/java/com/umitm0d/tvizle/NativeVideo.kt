@@ -112,7 +112,7 @@ class NativeVideo(
     // ───────────── ExoPlayer ─────────────
     private fun ensurePlayer(): ExoPlayer {
         player?.let { return it }
-        val renderers = DefaultRenderersFactory(act)
+        val renderers = DecoderTweaks.renderers(act)
             .setMediaCodecSelector(codecSelector)
             .setEnableDecoderFallback(true)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
@@ -153,7 +153,7 @@ class NativeVideo(
                 dropped += droppedFrames
             }
         })
-        p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+        p.trackSelectionParameters = applyCap(p.trackSelectionParameters.buildUpon())
             .setPreferredAudioLanguage("tr")
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)   // altyazıyı sayfa yönetiyor
             .build()
@@ -256,6 +256,17 @@ class NativeVideo(
         player?.let { it.stop(); it.clearMediaItems() }
         levelRefs = emptyList(); audioRefs = emptyList()
         refreshVisibility()
+    }
+
+    /** Sayfadan gelen en yüksek çözünürlük sınırı (0 = varsayılan: TV'de 1080p, telefonda sınırsız). */
+    private var maxH = 0
+    private fun applyCap(b: androidx.media3.common.TrackSelectionParameters.Builder): androidx.media3.common.TrackSelectionParameters.Builder =
+        if (maxH > 0) b.setMaxVideoSize(Int.MAX_VALUE, if (maxH >= 1080) 1088 else maxH)
+        else DecoderTweaks.cap(act, b)
+    fun setMaxHeight(h: Int) {
+        maxH = if (h in 144..4320) h else 0
+        val p = player ?: return
+        p.trackSelectionParameters = applyCap(p.trackSelectionParameters.buildUpon()).build()
     }
 
     fun level(i: Int) {

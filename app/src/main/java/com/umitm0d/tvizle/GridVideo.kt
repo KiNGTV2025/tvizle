@@ -73,7 +73,7 @@ class GridVideo(
 
     private fun ensurePlayer(i: Int, c: Cell): ExoPlayer {
         c.player?.let { return it }
-        val renderers = DefaultRenderersFactory(act).setEnableDecoderFallback(true)
+        val renderers = DecoderTweaks.renderers(act).setEnableDecoderFallback(true)
         val lc = DefaultLoadControl.Builder().setBufferDurationsMs(8000, 20000, 1500, 3000).build()
         val p = ExoPlayer.Builder(act, renderers)
             .setLoadControl(lc)
