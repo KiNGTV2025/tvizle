@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.SurfaceView
+import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
@@ -62,6 +63,30 @@ class NativeVideo(
     private var player: ExoPlayer? = null
     private val holder = FrameLayout(act)
     private val surface = SurfaceView(act)
+    // 4K: SurfaceView/donanım overlay yolu bazı SoC'lerde (Allwinner) bozuk renk üretiyor; 4K'da GPU yolu (TextureView) kullanılır
+    private var tex: TextureView? = null
+    private var useTex = false
+    private val vview: View get() = if (useTex) (tex ?: surface) else surface
+    private fun setTexture(on: Boolean) {
+        if (on == useTex) return
+        val p = player ?: return
+        useTex = on
+        if (on) {
+            val t = tex ?: TextureView(act).also {
+                tex = it
+                holder.addView(it, FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
+            }
+            t.visibility = View.VISIBLE
+            surface.visibility = View.GONE
+            p.setVideoTextureView(t)
+        } else {
+            tex?.visibility = View.GONE
+            surface.visibility = View.VISIBLE
+            p.setVideoSurfaceView(surface)
+        }
+        applyFit()
+    }
 
     private var loaded = false           // bir kaynak yüklü mü (sayfa şeffaflığı / yüzey görünürlüğü için)
     private var everReady = false
@@ -138,6 +163,7 @@ class NativeVideo(
                 oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) = pushState()
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 if (videoSize.height > 0) applyDisplayMode(videoSize.height)
+                if (videoSize.height >= 2000) setTexture(true) else if (videoSize.height in 1..1500) setTexture(false)
                 if (videoSize.height > 0) {
                     videoRatio = videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height
                     applyFit()
@@ -170,7 +196,7 @@ class NativeVideo(
             .setPreferredAudioLanguage("tr")
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)   // altyazıyı sayfa yönetiyor
             .build()
-        p.setVideoSurfaceView(surface)
+        if (useTex && tex != null) p.setVideoTextureView(tex) else p.setVideoSurfaceView(surface)
         applyVolume(p)
         p.setPlaybackSpeed(rate)
         player = p
@@ -403,7 +429,8 @@ class NativeVideo(
         val p = player ?: return
         val lp = holder.layoutParams
         val w = lp.width; val h = lp.height
-        val sl = surface.layoutParams as FrameLayout.LayoutParams
+        val vv = vview
+        val sl = vv.layoutParams as FrameLayout.LayoutParams
         var nw = ViewGroup.LayoutParams.MATCH_PARENT
         var nh = ViewGroup.LayoutParams.MATCH_PARENT
         when (fitMode) {
@@ -419,7 +446,7 @@ class NativeVideo(
         }
         if (sl.width != nw || sl.height != nh) {
             sl.width = nw; sl.height = nh; sl.gravity = Gravity.CENTER
-            surface.layoutParams = sl
+            vv.layoutParams = sl
         }
     }
 
