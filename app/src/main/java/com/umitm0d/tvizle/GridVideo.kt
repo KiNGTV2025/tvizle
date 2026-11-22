@@ -53,6 +53,7 @@ class GridVideo(
         var ratio = 0f
         var resumeOnStart = false
         var gen = 0; var t0 = 0L; var lastErr = ""
+        var src = ""; var rgen = 0; var vavooRetried = false
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -79,6 +80,8 @@ class GridVideo(
         val lc = DefaultLoadControl.Builder().setBufferDurationsMs(8000, 20000, 1500, 3000).build()
         val p = ExoPlayer.Builder(act, renderers)
             .setLoadControl(lc)
+            .setAudioAttributes(androidx.media3.common.AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), false)
             .setHandleAudioBecomingNoisy(true)
             .build()
         // çok kutuda dekoder yükünü azalt: en fazla 720p
@@ -140,14 +143,42 @@ class GridVideo(
     fun load(i: Int, url: String, ua: String, ref: String, kind: String) {
         val c = cell(i) ?: return
         val p = ensurePlayer(i, c)
-        c.url = url; c.ua = ua; c.ref = ref; c.kind = kind
+        val g = ++c.rgen
+        c.src = url; c.vavooRetried = false
+        c.kind = kind
         c.altTried = false; c.everReady = false; c.retries = 0; c.ratio = 0f
         c.loaded = true
-        p.setMediaSource(buildSource(c, kind))
-        p.playWhenReady = true
-        p.prepare()
+        p.stop()
         refresh(c)
         startDiag(i, c)
+        if (!VavooResolver.matches(url)) {
+            startSource(c, url, ua, ref)
+            return
+        }
+        // Vavoo adresleri düz oynatılamaz: tek kanal oynatıcıdaki gibi önce çözülür (yoksa kutu sonsuza dek BUFFERING'de kalır)
+        resolveThenStart(i, c, g)
+    }
+
+    private fun resolveThenStart(i: Int, c: Cell, g: Int) {
+        val src = c.src
+        VavooResolver.cached(src)?.let {
+            startSource(c, it, VavooResolver.UA_APP, VavooResolver.REFERER); return
+        }
+        VavooResolver.resolveAsync(src) { r ->
+            handler.post {
+                if (c.rgen != g || !c.loaded) return@post
+                if (r != null) startSource(c, r, VavooResolver.UA_APP, VavooResolver.REFERER)
+                else send(i, JSONObject().put("t", "er").put("c", -3).put("m", "VAVOO_RESOLVE"))
+            }
+        }
+    }
+
+    private fun startSource(c: Cell, url: String, ua: String, ref: String) {
+        val p = c.player ?: return
+        c.url = url; c.ua = ua; c.ref = ref
+        p.setMediaSource(buildSource(c, c.kind))
+        p.playWhenReady = true
+        p.prepare()
     }
 
     fun mute(i: Int, muted: Boolean) {
@@ -158,7 +189,7 @@ class GridVideo(
 
     fun stop(i: Int) {
         val c = cells.getOrNull(i) ?: return
-        c.loaded = false
+        c.loaded = false; c.rgen++
         c.player?.let { it.stop(); it.clearMediaItems() }
         refresh(c)
     }
@@ -240,6 +271,12 @@ class GridVideo(
         if (c.everReady && c.retries < MAX_SILENT_RETRIES) {
             c.retries++
             handler.postDelayed({ c.player?.let { it.prepare(); it.playWhenReady = true } }, 1500)
+            return
+        }
+        if (!c.everReady && !c.vavooRetried && VavooResolver.matches(c.src)) {   // süresi dolmuş/bozuk çözülmüş adres: bir kez yeniden çözdür
+            c.vavooRetried = true
+            VavooResolver.invalidate(c.src)
+            resolveThenStart(i, c, ++c.rgen)
             return
         }
         if (!c.everReady && !c.altTried && e.errorCode in 3000..3999) {   // HLS ↔ düz TS yanlış tahmini: bir kez diğeriyle dene

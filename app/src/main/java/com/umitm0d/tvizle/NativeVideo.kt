@@ -280,7 +280,23 @@ class NativeVideo(
     } }
     fun pause() { player?.playWhenReady = false }
     fun seek(ms: Long) { player?.seekTo(ms.coerceAtLeast(0L)) }
-    fun volume(v: Double, m: Boolean) { volume = v.toFloat().coerceIn(0f, 1f); muted = m; player?.let { applyVolume(it) } }
+    // Çoklu ekran: sayfa grid sırasında ana oynatıcıyı sessize alıyor ve kapanışta geri açmayı atlıyordu (ses hiç gelmiyordu).
+    private var gridSnapVol = -1f
+    private var gridEndAt = 0L
+    fun gridBegin() { if (gridSnapVol < 0f) gridSnapVol = volume }
+    fun gridEnd() {
+        if (gridSnapVol < 0f) return
+        volume = if (gridSnapVol > 0f) gridSnapVol else 1f
+        muted = false
+        gridSnapVol = -1f
+        gridEndAt = android.os.SystemClock.elapsedRealtime()
+        player?.let { applyVolume(it) }
+    }
+    fun volume(v: Double, m: Boolean) {
+        // grid kapandıktan hemen sonra gelen "sessize al" çağrısı (sayfanın eski durumu) yok sayılır
+        if (m && android.os.SystemClock.elapsedRealtime() - gridEndAt < 1500L) return
+        volume = v.toFloat().coerceIn(0f, 1f); muted = m; player?.let { applyVolume(it) }
+    }
     fun rate(r: Double) { rate = if (r > 0) r.toFloat() else 1f; player?.setPlaybackSpeed(rate) }
     fun retry() {
         val p = player ?: return
