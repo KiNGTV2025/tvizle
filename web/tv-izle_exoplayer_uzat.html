@@ -1184,7 +1184,7 @@ attempt(start);};CorsLoader.prototype.abort=function(){this.aborted=true;for(var
       else if (j.t === 'tr') onTracks(j);
       else if (j.t === 'er') onError(j);
       else if (j.t === 'rf') { S.rf = true; try { var _pw = document.getElementById('pw'); if (_pw) _pw.classList.add('has-frames'); } catch (e) {} }
-      else if (j.t === 'dbg') { try { toast(String(j.m || ''), 'info'); } catch (e) {} }
+      else if (j.t === 'dbg') { try { var _dm = String(j.m || ''); if (/\[(HW|SW)\]\s*$/i.test(_dm) || /\b(OMX|c2)\.[\w.\-]+/i.test(_dm)) { window.__umitDecInfo = _dm; try { window.dispatchEvent(new Event('umit-dec')); } catch (e2) {} } else { toast(_dm, 'info'); } } catch (e) {} }
     } catch (e) { try { console.error('umitNV', e); } catch (_) {} }
   };
   function onTracks(j) {
@@ -1387,6 +1387,12 @@ html.tv-device #pw.shov #umitNetBadge{opacity:1}
 #umitNetBadge[data-net="off"] .nb-dot{background:#ef4444}
 #umitNetBadge .nb-type{padding:3px 6px;border-radius:5px;background:rgba(255,255,255,.16);font-size:11px;letter-spacing:.4px}
 #umitNetBadge .nb-res{padding-left:8px;border-left:1px solid rgba(255,255,255,.25)}
+#umitNetBadge{flex-wrap:wrap;row-gap:0;min-width:196px;max-width:min(94vw,440px);box-sizing:border-box;border:1px solid rgba(255,255,255,.08)}
+#umitNetBadge .nb-dec{flex:0 0 100%;width:0;min-width:100%;box-sizing:border-box;display:flex;flex-wrap:wrap;row-gap:5px;align-items:center;gap:6px;min-width:0;margin-top:7px;padding-top:7px;border-top:1px solid rgba(255,255,255,.14);font-size:11px;font-weight:600}
+#umitNetBadge .nb-dec .dc{padding:3px 6px;border-radius:5px;background:rgba(255,255,255,.16);font-size:11px;letter-spacing:.3px;flex:0 0 auto}
+#umitNetBadge .nb-dec .dh{padding:3px 6px;border-radius:5px;font-size:10.5px;font-weight:800;letter-spacing:.5px;flex:0 0 auto;color:#06281d;background:#34d399}
+#umitNetBadge .nb-dec .dh.sw{color:#2a1c00;background:#fbbf24}
+#umitNetBadge .nb-dec .dn{min-width:0;flex:1 0 100%;order:3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.78;font-weight:500;font-size:10.5px}
 .umit-stats-panel{top:56px!important}
 </style>
 <style id="umit-topfit-css">
@@ -1649,7 +1655,7 @@ html.tv-device #tb-fitbtn{display:none!important}
       </button>
       <button class="mmtab" data-m="new" onclick="setMediaMode('new')">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.39 6.55L21 9l-5 4.36L17.45 20 12 16.5 6.55 20 8 13.36 3 9l6.61-.45L12 2z"/></svg>
-        <span>Son Eklenenler</span>
+        <span class="lb-full">Son Eklenenler</span><span class="lb-short">Yeni</span>
       </button>
     </div>
     <div class="tb-btns">
@@ -1876,7 +1882,7 @@ html.tv-device #tb-fitbtn{display:none!important}
         <div id="pw-brand" aria-hidden="true"><img id="pw-brand-img" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='block';"><div class="pwb-txt" style="display:none">ÜmitTV</div><div id="pwb-load"></div><div id="pwPctA">0%</div><div id="pwMsgA"></div></div>
         
         <div id="pw-pause" aria-hidden="true"><img id="pw-pause-img" alt=""><div class="pwp-txt">Duraklatıldı</div></div>
-        <div id="umitNetBadge" aria-hidden="true"><span class="nb-dot"></span><span class="nb-type" id="umitNetType">AĞ</span><span class="nb-mbps" id="umitNetMbps">…</span><span class="nb-res" id="umitNetRes" style="display:none"></span></div>
+        <div id="umitNetBadge" aria-hidden="true"><span class="nb-dot"></span><span class="nb-type" id="umitNetType">AĞ</span><span class="nb-mbps" id="umitNetMbps">…</span><span class="nb-res" id="umitNetRes" style="display:none"></span><span class="nb-dec" id="umitNetDec" style="display:none"></span></div>
         <canvas id="ch-freeze" style="position:absolute;inset:0;width:100%;height:100%;z-index:5;display:none;object-fit:inherit;"></canvas>
         
         <div class="umit-stats-panel" id="umitStatsPanel" style="display:none;">
@@ -7255,8 +7261,9 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 <script id="umit-orient-ctl">(function(){var modes=['auto','landscape','portrait'];var labels={auto:'Otomatik',landscape:'Yatay',portrait:'Dikey'};var cur='auto';function isFs(){return!!document.fullscreenElement||document.documentElement.classList.contains('fs-fallback');}
 function setLbl(){var l=document.getElementById('tb-orient-lbl');if(l)l.textContent=labels[cur];var b=document.getElementById('tb-orientbtn');if(b)b.classList.toggle('on',cur!=='auto');}
 function say(m,t){try{toast(m,t||'ok');}catch(e){}}
-function lock(mode){var so=screen.orientation;if(!so||!so.lock)return Promise.reject(new Error('unsupported'));return so.lock(mode).catch(function(err){if(isFs())throw err;var el=document.getElementById('app');var req=el&&(el.requestFullscreen||el.webkitRequestFullscreen);if(!req)throw err;return Promise.resolve(req.call(el)).then(function(){return so.lock(mode);});});}
-window.umitCycleOrient=function(){var next=modes[(modes.indexOf(cur)+1)%modes.length];if(next==='auto'){try{if(screen.orientation&&screen.orientation.unlock)screen.orientation.unlock();}catch(e){}
+function nat(mode){try{var U=window.UmitVideo;if(U&&typeof U.orient==='function'){U.orient(mode);return true;}}catch(e){}return false;}
+function lock(mode){if(nat(mode))return Promise.resolve();var so=screen.orientation;if(!so||!so.lock)return Promise.reject(new Error('unsupported'));return so.lock(mode).catch(function(err){if(isFs())throw err;var el=document.getElementById('app');var req=el&&(el.requestFullscreen||el.webkitRequestFullscreen);if(!req)throw err;return Promise.resolve(req.call(el)).then(function(){return so.lock(mode);});});}
+window.umitCycleOrient=function(){var next=modes[(modes.indexOf(cur)+1)%modes.length];if(next==='auto'){nat('auto');try{if(screen.orientation&&screen.orientation.unlock)screen.orientation.unlock();}catch(e){}
 cur='auto';setLbl();say('Ekran yönü: Otomatik');return;}
 lock(next).then(function(){cur=next;setLbl();say('Ekran yönü: '+labels[next]);}).catch(function(){cur='auto';setLbl();say('Yön kilidi çalışmadı. Telefonun otomatik döndürmesini açıp cihazı elle çevirin.','warn');});};document.addEventListener('fullscreenchange',function(){if(!isFs()&&cur!=='auto'){try{if(screen.orientation&&screen.orientation.unlock)screen.orientation.unlock();}catch(e){}
 cur='auto';setLbl();}});setLbl();})();(function(){var timer=null,token=0;function V(){return document.getElementById('vid');}
@@ -9589,7 +9596,16 @@ if(!wrap())window.addEventListener('load',function(){setTimeout(wrap,500);});
 })();</script>
 <script id="umit-net-badge-js">(function(){try{
 var pw=document.getElementById('pw'),b=document.getElementById('umitNetBadge');if(!pw||!b)return;
-var tEl=document.getElementById('umitNetType'),mEl=document.getElementById('umitNetMbps'),rEl=document.getElementById('umitNetRes'),lastM=0;
+var tEl=document.getElementById('umitNetType'),mEl=document.getElementById('umitNetMbps'),rEl=document.getElementById('umitNetRes'),dEl=document.getElementById('umitNetDec'),lastM=0,lastD='\u0000',decT=0;
+var CN={avc:'H.264',h264:'H.264',hevc:'H.265',h265:'H.265',vp9:'VP9',vp8:'VP8',av1:'AV1',mpeg2:'MPEG-2',mpeg4:'MPEG-4',vc1:'VC-1'};
+function dec(){try{var d=window.__umitDecInfo||'';if(d===lastD)return;lastD=d;dEl.textContent='';if(!d){dEl.style.display='none';return;}
+var m=/^\s*([\w.\-]+)\s+(\d+)\s*[\u00d7x]\s*(\d+)\s*\|\s*(.+?)\s*\[(HW|SW)\]\s*$/i.exec(d);
+function sp(c,t){var e=document.createElement('span');e.className=c;e.textContent=t;dEl.appendChild(e);return e;}
+if(m){var k=m[1].toLowerCase();sp('dc',CN[k]||m[1].toUpperCase());var hw=m[5].toUpperCase()==='HW';sp('dh'+(hw?'':' sw'),hw?'DONANIM':'YAZILIM');sp('dn',m[4]);}
+else{var h=/\[(HW|SW)\]/i.exec(d);if(h){var hw2=h[1].toUpperCase()==='HW';sp('dh'+(hw2?'':' sw'),hw2?'DONANIM':'YAZILIM');d=d.replace(/\s*\[(HW|SW)\]\s*$/i,'');}sp('dn',d);}
+dEl.style.display='flex';}catch(e){}}
+window.addEventListener('umit-dec',function(){try{pw.classList.add('umit-nbshow');clearTimeout(decT);decT=setTimeout(function(){pw.classList.remove('umit-nbshow');},6000);upd();}catch(e){}});
+document.addEventListener('loadstart',function(e){try{if(e.target&&e.target.id==='vid'){window.__umitDecInfo='';}}catch(x){}},true);
 function conn(){var c=navigator.connection||navigator.mozConnection||navigator.webkitConnection,t=c&&c.type;
 if(navigator.onLine===false||t==='none')return['ÇEVRİMDIŞI','off'];
 if(t==='wifi')return['WIFI','wifi'];if(t==='cellular')return['MOBİL VERİ','cell'];if(t==='ethernet')return['ETHERNET','eth'];
@@ -9606,13 +9622,13 @@ var l=bx.left,t=bx.top,r=bx.right,vw=v.videoWidth,vh=v.videoHeight,of='';try{of=
 if(vw&&vh&&(of===''||of==='contain'||of==='scale-down')){var sc=Math.min(bx.width/vw,bx.height/vh),dw=vw*sc,dh=vh*sc;l=bx.left+(bx.width-dw)/2;t=bx.top+(bx.height-dh)/2;r=l+dw;}
 t=Math.max(t,bx.top);r=Math.min(r,bx.right);
 var tb=document.getElementById('topbar'),tbb=0;if(tb){var tr=tb.getBoundingClientRect();if(tr.height>0)tbb=tr.bottom;}
-var y=Math.max(t+8,tbb+8,8),x=Math.min(r-10,(window.innerWidth||r)-6);
+var bh=b.offsetHeight||80,ab=t-bh-10,y=(ab>=Math.max(tbb,pw.getBoundingClientRect().top)+4)?ab:Math.max(t+8,tbb+8,8),x=Math.min(r-10,(window.innerWidth||r)-6);
 var base=b.offsetParent||pw,br=base.getBoundingClientRect();
 b.style.top=Math.round(y-br.top)+'px';b.style.right=Math.round(br.right-x)+'px';}catch(e){}}
 function upd(){try{if(document.hidden||(window.__umitNavBusy&&window.__umitNavBusy())||!visible())return;
 var c=conn();tEl.textContent=c[0];b.setAttribute('data-net',c[1]);
 var m=mbps();if(m>0)lastM=m;mEl.textContent=lastM>0?lastM.toFixed(2)+' Mbps':'… Mbps';
-var r=res();rEl.textContent=r;rEl.style.display=r?'':'none';pos();}catch(e){}}
+var r=res();rEl.textContent=r;rEl.style.display=r?'':'none';dec();pos();}catch(e){}}
 setInterval(upd,1000);
 try{new MutationObserver(upd).observe(pw,{attributes:true,attributeFilter:['class']});}catch(e){}
 window.addEventListener('online',upd);window.addEventListener('offline',upd);window.addEventListener('resize',upd);window.addEventListener('orientationchange',upd);document.addEventListener('fullscreenchange',upd);
@@ -9875,5 +9891,75 @@ if(row){lastOk=Date.now();lastRow=row;}
 })();
 </script>
 <style id="umit-dup-fs-fix">@media (max-width:1024px){html:not(.tv-device) #topbar #tb-pagefsbtn{display:none!important}html:not(.tv-device) #topbar #tb-settingsbtn{margin-left:auto}}</style>
+<style id="umit-topbar-modern-v2">
+/* ÜmitTV · Üst menü v2 — kesik yok, kaydırma yok, her şey ekrana sığar (telefon / tablet dikey) */
+.lb-short{display:none}
+@media (max-width:1024px) and (min-height:601px){
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar{
+  position:relative;display:flex!important;flex-wrap:wrap!important;align-items:center!important;
+  gap:8px!important;row-gap:8px!important;padding:10px 12px 10px!important;overflow:visible!important;
+  background:
+    radial-gradient(120% 140% at 0% 0%,rgba(249,115,22,.22),transparent 55%),
+    radial-gradient(90% 120% at 100% 0%,rgba(251,191,36,.10),transparent 60%),
+    linear-gradient(180deg,#1a1006,#0d0904)!important;
+  border-bottom:1px solid rgba(249,115,22,.35)!important;
+  box-shadow:0 10px 30px rgba(0,0,0,.55),inset 0 -1px 0 rgba(255,255,255,.04)!important}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;background:linear-gradient(90deg,transparent,#f97316,#fbbf24,#f97316,transparent);opacity:.55;pointer-events:none}
+/* 1. satır: logo · liste adı · yenile · sığdır · ayarlar */
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar .tb-logo{order:1;flex:0 0 auto;font-size:21px!important;line-height:1!important;font-weight:900!important;letter-spacing:-.6px!important}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar .tb-src{order:2;flex:1 1 0!important;min-width:0!important;max-width:none!important;height:38px;box-sizing:border-box;display:flex;align-items:center;gap:8px;padding:0 14px!important;border-radius:999px!important;background:rgba(255,255,255,.05)!important;border:1px solid rgba(249,115,22,.30)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar .tb-src #srcnm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:700}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar .pl-switch{order:3}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar .pls-refresh-standalone{order:3}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar #tb-fitbtn{order:4}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar #tb-settingsbtn{order:5;margin-left:0!important}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar #tb-fitbtn .tb-fit-lbl,html:not(.tv-device):not(#u):not(.umk-watch) #topbar #tb-settingsbtn span{display:none!important}
+/* ortak cam butonlar */
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar .tbbtn,html:not(.tv-device):not(#u):not(.umk-watch) #topbar .pls-refresh-standalone{
+  box-sizing:border-box;height:40px!important;min-height:40px!important;min-width:40px;padding:0 12px!important;border-radius:13px!important;
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;flex:0 0 auto;
+  font-size:13px!important;font-weight:700!important;letter-spacing:0!important;color:#fff3dc!important;
+  background:linear-gradient(180deg,rgba(255,255,255,.10),rgba(255,255,255,.03))!important;
+  border:1px solid rgba(255,255,255,.10)!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.10),0 4px 12px rgba(0,0,0,.35)!important;
+  -webkit-tap-highlight-color:transparent;transition:transform .12s ease,background .15s ease}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar #tb-fitbtn,html:not(.tv-device):not(#u):not(.umk-watch) #topbar #tb-settingsbtn,html:not(.tv-device):not(#u):not(.umk-watch) #topbar .pls-refresh-standalone{width:40px;padding:0!important}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar .tbbtn svg{width:18px!important;height:18px!important;color:#fbbf24!important;flex:0 0 auto}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar .tbbtn:active{transform:scale(.93)}
+/* 2.-3. satır: ARA + ÇIKIŞ, altında eşit aralıklı ikonlar (kaydırma yok) */
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar .tb-btns{order:6;flex:1 1 100%!important;display:flex!important;flex-wrap:wrap!important;overflow:visible!important;gap:8px!important;padding:0!important;width:100%;box-sizing:border-box}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar .tb-btns>.tbbtn{flex:1 1 40px;min-width:40px}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar .tb-btns>#epgtb{display:none!important}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar .tb-btns>#x13-tb-search{order:1;flex:1 1 auto;width:calc(100% - 112px);max-width:calc(100% - 112px);justify-content:flex-start;padding:0 16px!important;border-color:rgba(249,115,22,.45)!important}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar .tb-btns>#x13-tb-search span{opacity:.9}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar .tb-btns>#tb-exitbtn{order:2;flex:0 0 104px!important;width:104px!important;max-width:104px;height:40px!important;min-height:40px!important;padding:0 10px!important;margin:0!important;border-radius:13px!important;gap:6px!important;font-size:13px!important;font-weight:800!important;letter-spacing:.3px!important;color:#fff!important;
+  background:linear-gradient(180deg,#f04848,#b01818)!important;border:1px solid rgba(255,200,200,.5)!important;box-shadow:0 6px 16px rgba(220,38,38,.45),inset 0 1px 0 rgba(255,255,255,.3)!important}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar .tb-btns>#tb-exitbtn svg{color:#fff!important;width:18px!important;height:18px!important}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar .tb-btns>*:not(#x13-tb-search):not(#tb-exitbtn){order:3}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar #voiceCmdBtn{background:linear-gradient(135deg,#f97316,#ef4444)!important;border-color:rgba(255,255,255,.3)!important;box-shadow:0 6px 16px rgba(249,115,22,.4),inset 0 1px 0 rgba(255,255,255,.3)!important}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar #voiceCmdBtn svg{color:#fff!important;width:20px!important;height:20px!important}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar #tb-orientbtn #tb-orient-lbl{display:none}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar #tb-pagefsbtn{display:none!important}
+/* 4. satır: sekmeler — 7 eşit sütun, ikon üstte / yazı altta */
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar #mmtabs{order:7;flex:1 1 100%!important;width:100%;box-sizing:border-box;display:flex!important;flex-wrap:nowrap!important;overflow:visible!important;gap:3px!important;padding:4px!important;
+  border-radius:18px!important;background:rgba(0,0,0,.38)!important;border:1px solid rgba(255,255,255,.07)!important;box-shadow:inset 0 2px 10px rgba(0,0,0,.5)!important}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar #mmtabs>.mmtab,html:not(.tv-device):not(#u):not(.umk-watch) #topbar #mmtabs>.tbbtn{
+  flex:1 1 0!important;min-width:0!important;width:auto!important;height:50px!important;min-height:50px!important;padding:4px 1px!important;
+  flex-direction:column!important;justify-content:center!important;align-items:center!important;gap:3px!important;border-radius:14px!important;border:0!important;background:transparent!important;box-shadow:none!important;
+  color:#b9a07a!important;font-size:10.5px!important;font-weight:700!important;line-height:1.1!important;letter-spacing:0!important;text-align:center;overflow:hidden}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar #mmtabs>.mmtab span,html:not(.tv-device):not(#u):not(.umk-watch) #topbar #mmtabs>.tbbtn span{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar #mmtabs>.mmtab svg,html:not(.tv-device):not(#u):not(.umk-watch) #topbar #mmtabs>.tbbtn svg{width:19px!important;height:19px!important;color:currentColor!important;opacity:.9}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar #mmtabs>#whatBtn{display:flex!important;flex:.8 1 0!important}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar #mmtabs>#whatBtn span{display:none!important}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar #mmtabs>#whatBtn svg{color:#fbbf24!important;opacity:1}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar #mmtabs>.mmtab.on{
+  color:#1b0f00!important;background:linear-gradient(135deg,#f97316,#fbbf24)!important;
+  box-shadow:0 6px 16px rgba(249,115,22,.5),inset 0 1px 0 rgba(255,255,255,.45)!important}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar #mmtabs>.mmtab.on svg{color:#1b0f00!important;opacity:1}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar #mmtabs>.mmtab .lb-full{display:none!important}
+html:not(.tv-device):not(#u):not(.umk-watch) #topbar #mmtabs>.mmtab .lb-short{display:block!important}
+}
+@media (max-width:390px) and (min-height:601px){html:not(.tv-device):not(#u):not(.umk-watch) #topbar{padding:10px 10px!important}html:not(.tv-device):not(#u):not(.umk-watch) #topbar #mmtabs{padding:3px!important;gap:2px!important}html:not(.tv-device):not(#u):not(.umk-watch) #topbar #mmtabs>.mmtab,html:not(.tv-device):not(#u):not(.umk-watch) #topbar #mmtabs>.tbbtn{font-size:9px!important;padding:4px 0!important}html:not(.tv-device):not(#u):not(.umk-watch) #topbar #mmtabs>#whatBtn{flex:.6 1 0!important}}
+</style>
 </body>
 </html>

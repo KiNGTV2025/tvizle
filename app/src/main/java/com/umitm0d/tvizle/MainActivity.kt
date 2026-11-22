@@ -489,6 +489,15 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         @JavascriptInterface fun rate(r: Double) = ui { nv.rate(r) }
         @JavascriptInterface fun stop() = ui { nv.stop() }
         @JavascriptInterface fun retry() = ui { nv.retry() }
+        /** Ekran yönü: "landscape" | "portrait" | "auto" (sayfadaki Döndür düğmesi). */
+        @JavascriptInterface
+        fun orient(mode: String) = ui {
+            requestedOrientation = when (mode) {
+                "landscape" -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                "portrait" -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                else -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
+        }
         // ── Çoklu ekran (kutu başına ExoPlayer) ──
         @JavascriptInterface
         fun gLoad(i: Int, url: String, ua: String, referer: String, kind: String) = ui {
