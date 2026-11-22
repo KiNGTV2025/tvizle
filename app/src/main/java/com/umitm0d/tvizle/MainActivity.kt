@@ -131,6 +131,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     private lateinit var web: WebView
     private lateinit var root: FrameLayout
     private lateinit var nv: NativeVideo
+    private lateinit var gv: GridVideo
     private var customView: View? = null
     private var customCb: WebChromeClient.CustomViewCallback? = null
 
@@ -161,6 +162,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         web = WebView(this).apply { setBackgroundColor(Color.TRANSPARENT); isFocusable = true }   // şeffaf: video arkadaki SurfaceView'den görünür
         root.addView(web, match)
         nv = NativeVideo(this, root, web) { js -> web.evaluateJavascript(js, null) }   // WebView'in ALTINA video katmanı
+        gv = GridVideo(this, root, web) { js -> web.evaluateJavascript(js, null) }   // çoklu ekran kutuları (her biri ayrı ExoPlayer)
         setContentView(root)
 
         with(web.settings) {
@@ -358,6 +360,17 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         @JavascriptInterface fun rate(r: Double) = ui { nv.rate(r) }
         @JavascriptInterface fun stop() = ui { nv.stop() }
         @JavascriptInterface fun retry() = ui { nv.retry() }
+        // ── Çoklu ekran (kutu başına ExoPlayer) ──
+        @JavascriptInterface
+        fun gLoad(i: Int, url: String, ua: String, referer: String, kind: String) = ui {
+            if (url.startsWith("http://") || url.startsWith("https://")) gv.load(i, url, ua, referer, kind)
+        }
+        @JavascriptInterface fun gStop(i: Int) = ui { gv.stop(i) }
+        @JavascriptInterface fun gStopAll() = ui { gv.stopAll() }
+        @JavascriptInterface fun gMute(i: Int, muted: Boolean) = ui { gv.mute(i, muted) }
+        @JavascriptInterface
+        fun gRect(i: Int, x: Double, y: Double, w: Double, h: Double, iw: Double, ih: Double, show: Boolean) =
+            ui { gv.rect(i, x, y, w, h, iw, ih, show) }
         @JavascriptInterface fun level(i: Int) = ui { nv.level(i) }
         @JavascriptInterface fun audio(i: Int) = ui { nv.audio(i) }
         @JavascriptInterface
@@ -699,7 +712,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     }
 
     override fun onResume() {
-        super.onResume(); web.onResume(); immersive(); nv.onHostStart()
+        super.onResume(); web.onResume(); immersive(); nv.onHostStart(); gv.onHostStart()
         mediaSession?.isActive = true            // direksiyon medya tuşları bu uygulamaya gelsin
         if (!btnReceiverOn) {
             val f = IntentFilter(Intent.ACTION_MEDIA_BUTTON).apply { priority = 1000 }
@@ -713,7 +726,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         mediaSession?.isActive = false           // arka plandayken müzik/navigasyon uygulamasının tuşlarını çalma
         if (btnReceiverOn) { runCatching { unregisterReceiver(mediaBtnReceiver) }; btnReceiverOn = false }
         destroyRecognizer()
-        nv.onHostStop()
+        nv.onHostStop(); gv.onHostStop()
         web.onPause(); super.onPause()
     }
 
@@ -722,7 +735,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         mediaSession?.release(); mediaSession = null
         fileCb?.onReceiveValue(null); fileCb = null
         if (dlReceiverOn) { runCatching { unregisterReceiver(dlCompleteReceiver) }; dlReceiverOn = false }
-        nv.release()
+        nv.release(); gv.release()
         root.removeAllViews(); web.destroy(); super.onDestroy()
     }
 
