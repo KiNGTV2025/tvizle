@@ -556,6 +556,14 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             }
         }
         @JavascriptInterface
+        fun checkUpdateNow() {
+            runOnUiThread {
+                val u = web.url
+                if (u == null || !u.startsWith(REMOTE_URL)) return@runOnUiThread
+                this@MainActivity.checkUpdateNow()
+            }
+        }
+        @JavascriptInterface
         fun stopListening() { runOnUiThread { runCatching { recognizer?.stopListening() } } }
         @JavascriptInterface
         fun cancelListening() { runOnUiThread { destroyRecognizer() } }
@@ -961,17 +969,22 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     private fun stopUpdateWatch() { updWatchOn = false; uiHandler.removeCallbacks(updWatch) }
 
     /** Her açılışta (en az 15 dk arayla) GitHub'daki son sürüme bakar; yeniyse üstte "Güncelleme var" şeridi gösterir. */
-    private fun maybeCheckForUpdate() {
+    private fun maybeCheckForUpdate(manual: Boolean = false) {
         val sp = getSharedPreferences("umittv", MODE_PRIVATE)
         val last = sp.getLong("upd_last_check", 0L)
         val now = System.currentTimeMillis()
-        if (now - last < UPDATE_CHECK_MIN_GAP_MS || pendingDownloadId != -1L || updArgs != null) return
+        if (manual) {
+            if (pendingDownloadId != -1L || updArgs != null) { toastUpd("Güncelleme zaten hazır / indiriliyor"); return }
+            sp.edit().remove("upd_snooze_until").remove("upd_snooze_code").remove("upd_dismissed").apply()   // elle kontrolde bekletme yok sayılır
+            toastUpd("Güncelleme kontrol ediliyor…")
+        } else if (now - last < UPDATE_CHECK_MIN_GAP_MS || pendingDownloadId != -1L || updArgs != null) return
         sp.edit().putLong("upd_last_check", now).apply()
         Thread {
             try {
                 var remoteCode = -1
                 var url = ""
                 var vName = ""; var sizeB = 0L; var notes = ""
+                var src = "yok"; var wHttp = 0; var gHttp = 0
                 // 0) Cloudflare Worker: anlık, tek istek, GitHub limiti/token gerektirmez
                 if (UPDATE_WORKER_URL.isNotBlank()) runCatching {
                     val q = if (UPDATE_WORKER_KEY.isNotBlank()) "?k=" + UPDATE_WORKER_KEY else ""
@@ -979,7 +992,9 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                     remoteCode = j.optInt("versionCode", -1)
                     url = j.optString("url", "")
                     vName = j.optString("versionName", ""); notes = j.optString("notes", ""); sizeB = j.optLong("size")
+                    if (remoteCode > 0) src = "Worker"
                 }
+                wHttp = lastHttp
                 // 1) GitHub Releases (Worker yoksa/çalışmazsa): etiket "v<versionCode>", ek dosya UmitTV.apk
                 if (remoteCode <= 0 || url.isBlank()) runCatching {
                     val j = JSONObject(httpGet(GITHUB_LATEST_API) ?: "")
@@ -991,27 +1006,61 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                         val a = assets.getJSONObject(k)
                         if (a.optString("name").endsWith(".apk", true)) { url = a.optString("url"); sizeB = a.optLong("size"); break }
                     }
+                    if (remoteCode > 0) src = "GitHub"
                 }.onFailure { updDbg("GitHub okunamadı: HTTP $lastHttp (${it.javaClass.simpleName})") }
-                val ghHttp = lastHttp
+                val ghHttp = lastHttp; gHttp = ghHttp
                 // 2) yedek: eski update.json
                 if (remoteCode <= 0 || url.isBlank()) {
-                    val j = JSONObject(httpGet(UPDATE_MANIFEST_URL) ?: return@Thread)
+                    val j = JSONObject(httpGet(UPDATE_MANIFEST_URL) ?: run { if (manual) toastUpd("Kontrol edilemedi: sunucuya ulaşılamadı"); return@Thread })
                     remoteCode = j.optInt("versionCode", -1)
                     url = j.optString("url", "")
                     vName = j.optString("versionName", ""); notes = j.optString("notes", "")
+                    src = "update.json"
                 }
                 updDbg("GitHub HTTP $ghHttp, uzak=$remoteCode, yerel=${currentVersionCode()}, apk=${if (url.isBlank()) "yok" else "var"}, token=${if (REL_TOKEN.isBlank()) "YOK" else "var"}")
-                if (remoteCode <= currentVersionCode() || url.isBlank()) return@Thread
+                if (remoteCode <= currentVersionCode() || url.isBlank()) {
+                    if (manual) showUpdDiag(
+                        if (remoteCode <= 0 || url.isBlank()) "Kontrol edilemedi" else "Güncel sürümdesin",
+                        diagText(remoteCode, vName, src, wHttp, gHttp, url.isNotBlank(), null))
+                    return@Thread
+                }
                 if (sp.getInt("upd_dismissed", 0) >= remoteCode) return@Thread
                 // "Sonra"/iptal bekletmesi yalnızca O sürüm için geçerli; daha yeni bir sürüm çıkınca hemen gösterilir
                 if (System.currentTimeMillis() < sp.getLong("upd_snooze_until", 0L) && remoteCode <= sp.getInt("upd_snooze_code", 0)) return@Thread
                 val code = remoteCode; val u = url; val n = vName; val sz = sizeB; val nt = notes
                 runOnUiThread { if (!isFinishing) showUpdateBanner(u, n, sz, nt, code) }
             } catch (e: Exception) {
-                // sessizce geç: ağ yok / JSON bozuk / sunucu yok
+                // otomatik kontrolde sessizce geç: ağ yok / JSON bozuk / sunucu yok
+                if (manual) showUpdDiag("Kontrol edilemedi", diagText(-1, "", "yok", lastHttp, lastHttp, false, e))
             }
         }.start()
     }
+
+    /** Elle kontrol sonucu: yerel/sunucu sürümü, kaynak ve HTTP kodları (sorun gidermek için). */
+    private fun diagText(remote: Int, rName: String, src: String, wHttp: Int, gHttp: Int, hasApk: Boolean, err: Exception?): String {
+        val sp = getSharedPreferences("umittv", MODE_PRIVATE)
+        val sb = StringBuilder()
+        sb.append("Yerel sürüm: v").append(currentVersionName()).append(" (kod ").append(currentVersionCode()).append(")\n")
+        sb.append("Sunucudaki sürüm: ").append(if (remote > 0) "v$rName (kod $remote)" else "alınamadı").append("\n")
+        sb.append("Kaynak: ").append(src).append("\n")
+        sb.append("Worker HTTP: ").append(wHttp).append(if (UPDATE_WORKER_URL.isBlank()) " (Worker adresi tanımsız)" else "").append("\n")
+        sb.append("GitHub HTTP: ").append(gHttp).append("\n")
+        sb.append("APK adresi: ").append(if (hasApk) "var" else "yok").append("\n")
+        sb.append("Bekletme: ").append(if (System.currentTimeMillis() < sp.getLong("upd_snooze_until", 0L)) "aktif (kod " + sp.getInt("upd_snooze_code", 0) + ")" else "yok").append("\n")
+        if (err != null) sb.append("Hata: ").append(err.javaClass.simpleName).append(" ").append(err.message ?: "").append("\n")
+        return sb.toString().trim()
+    }
+
+    private fun showUpdDiag(title: String, text: String) {
+        runOnUiThread { if (!isFinishing) runCatching { android.app.AlertDialog.Builder(this).setTitle(title).setMessage(text).setPositiveButton("Tamam", null).show() } }
+    }
+
+    private fun toastUpd(msg: String) { runOnUiThread { Toast.makeText(this, msg, Toast.LENGTH_LONG).show() } }
+
+    private fun currentVersionName(): String = try { packageManager.getPackageInfo(packageName, 0).versionName ?: "?" } catch (e: Exception) { "?" }
+
+    /** Ayarlar'daki "Güncellemeyi kontrol et" düğmesinden çağrılır: bekletmeyi yok sayıp hemen kontrol eder, sonucu toast ile söyler. */
+    private fun checkUpdateNow() { maybeCheckForUpdate(true) }
 
     // ── Güncelleme modalı: durumlar ──────────────────────────────
     private var updBanner: View? = null                       // tam ekran modal (karartma + kart)

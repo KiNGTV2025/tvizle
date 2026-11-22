@@ -2196,5 +2196,14 @@ html.umit-embedded #topbar .tb-logo:focus-visible .tl-b{box-shadow:0 0 0 2px var
 html:not(.tv-device):not(#u):not(.umk-watch) #topbar #tb-settingsbtn{order:4!important;margin-left:0!important}
 @media (min-width:1025px){html:not(.tv-device) #topbar #tb-settingsbtn{margin-left:auto}}
 </style>
+<script id="umit-native-upd-check-v1">(function(){
+/* Ayarlar > "Güncellemeyi kontrol et": APK içindeyse yerel (native) kontrolü çalıştırır; bekletmeyi yok sayar, sonucu toast ile gösterir. */
+document.addEventListener('click',function(e){try{
+  var b=e.target&&e.target.closest&&e.target.closest('#umit-upd-check-btn');
+  if(!b||!window.UmitNative||typeof UmitNative.checkUpdateNow!=='function')return;
+  e.preventDefault();e.stopImmediatePropagation();
+  UmitNative.checkUpdateNow();
+}catch(x){}},true);
+})();</script>
 </body>
 </html>
