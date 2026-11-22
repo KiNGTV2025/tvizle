@@ -344,7 +344,10 @@ class NativeVideo(
         if (m && android.os.SystemClock.elapsedRealtime() - gridEndAt < 1500L) return
         val was = muted
         volume = v.toFloat().coerceIn(0f, 1f); muted = m; player?.let { applyVolume(it) }
-        if (m != was) android.widget.Toast.makeText(act, "SES-TANI ana: " + (if (m) "SESSİZ" else "AÇIK") + " (sayfa istedi, vol=" + (volume * 100).toInt() + ")", android.widget.Toast.LENGTH_SHORT).show()
+        if (m != was) {
+            val dbg = "SES-TANI ana: " + (if (m) "SESSİZ" else "AÇIK") + " (sayfa istedi, vol=" + (volume * 100).toInt() + ")"
+            act.runOnUiThread { runCatching { web.evaluateJavascript("window.__vlmDbg&&window.__vlmDbg('" + dbg + "')", null) } }
+        }
     }
     fun rate(r: Double) { rate = if (r > 0) r.toFloat() else 1f; player?.setPlaybackSpeed(rate) }
     fun retry() {

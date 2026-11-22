@@ -76,7 +76,7 @@ open class MainActivity : Activity() {
         /** Güncelleme bilgisini buradan okur: {"versionCode":3,"versionName":"1.2","url":"https://.../UmitTV.apk","notes":"..."} */
         private val UPDATE_MANIFEST_URL = deobf("Mi8oLS1lT04XDg0RC1cMRw0CGAUbDV4YHVw1GRccGQsOVAkQFwv099329OHn8+2n4Pjj4w==", OBF_KEY)
         private val TRUSTED_PREFIX = deobf("Mi8oLS1lT04XDg0RC1cMRw0CGAUbDV4YHVw=", OBF_KEY)
-        private const val UPDATE_CHECK_MIN_GAP_MS = 15L * 60 * 1000   // en az 15 dakikada bir kontrol et
+        private const val UPDATE_CHECK_MIN_GAP_MS = 1L * 60 * 1000   // deneme: en az 1 dakikada bir kontrol et
         private val REL_TOKEN: String by lazy { if (BuildConfig.REL_TOKEN.isBlank()) "" else deobf(BuildConfig.REL_TOKEN, OBF_KEY) }
         private const val GITHUB_LATEST_API = "https://api.github.com/repos/KiNGTV2025/tvizle-releases/releases/latest"
 
