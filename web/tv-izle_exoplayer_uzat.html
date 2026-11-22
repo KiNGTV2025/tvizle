@@ -968,9 +968,18 @@ attempt(start);};CorsLoader.prototype.abort=function(){this.aborted=true;for(var
     url = String(url || '');
     if (!/^https?:/i.test(url)) { try { url = new URL(url, location.href).href; } catch (e) {} }
     var ua = '', ref = '';
+    try {   // tarayıcı için sarılmış proxy adresini aç: ExoPlayer CORS proxy'sine ihtiyaç duymaz, doğrudan + ref/ua başlıklarıyla gider
+      var pm = /^https:\/\/(?:proxy1\.umittv\.workers\.dev\/\?stream=|cors-proxy-pink-gamma\.vercel\.app\/api\/[ps]\?url=|x-real-ip\.umitm0d\.workers\.dev\/resolve\?url=)([^&]+)(&.*)?$/i.exec(url);
+      if (pm) {
+        url = decodeURIComponent(pm[1]);
+        var q = pm[2] || '', mr = /[&?]ref=([^&]*)/.exec(q), mu = /[&?]ua=([^&]*)/.exec(q);
+        if (mr) ref = decodeURIComponent(mr[1]);
+        if (mu) ua = decodeURIComponent(mu[1]);
+      }
+    } catch (e) {}
     try {
       var k = (typeof lookupKnownRefererUa === 'function') ? lookupKnownRefererUa(url) : null;
-      if (k) { ua = k.userAgent || ''; ref = k.referrer || ''; }
+      if (k) { if (!ua) ua = k.userAgent || ''; if (!ref) ref = k.referrer || ''; }
       if (!ua && typeof getCustomUserAgent === 'function') ua = getCustomUserAgent() || '';
     } catch (e) {}
     var vol = S.vol, muted = S.muted, rate = S.rate;
@@ -981,6 +990,12 @@ attempt(start);};CorsLoader.prototype.abort=function(){this.aborted=true;for(var
     B.volume(S.vol, S.muted); B.rate(S.rate);
     log('load', why || '', url);
     B.load(url, ua, ref, 0, !!auto, why || '');
+    try {   // köprü komutu native tarafa ulaşıyor mu? 6 sn içinde hiç durum gelmezse nedenini göster
+      var tok = S;
+      setTimeout(function () {
+        try { if (S === tok && S.native && S.st === 0 && !S.err) toast('ExoPlayer yanıt vermedi. Sayfa: ' + String(location.href).slice(0, 60), 'err'); } catch (e) {}
+      }, 6000);
+    } catch (e) {}
     ev('emptied'); ev('loadstart');
     if (auto && vid && !vid.autoplay) { S.paused = true; S.pwr = false; B.pause(); }   // sayfa loadstart'ta autoplay'i kapattıysa (ön tampon vb.) beklet
     else if (auto) ev('play');
@@ -1211,6 +1226,7 @@ attempt(start);};CorsLoader.prototype.abort=function(){this.aborted=true;for(var
   function onError(j) {
     S.st = 0; S.err = { code: j.cat === 'net' || j.cat === 'timeout' ? 2 : (j.cat === 'decode' || j.cat === 'parse' ? 3 : 4), message: j.m || '', MEDIA_ERR_ABORTED: 1, MEDIA_ERR_NETWORK: 2, MEDIA_ERR_DECODE: 3, MEDIA_ERR_SRC_NOT_SUPPORTED: 4 };
     log('hata', j.cat, j.c, j.m);
+    try { var tn = now(); if (!window.__umitExoErrT || tn - window.__umitExoErrT > 4000) { window.__umitExoErrT = tn; toast('ExoPlayer: ' + (j.cat || '') + ' ' + (j.c || '') + ' ' + String(j.m || '').slice(0, 90), 'err'); } } catch (e) {}
     var net = (j.cat === 'net' || j.cat === 'timeout');
     var early = !S.meta;
     if (hlsActive) {

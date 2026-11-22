@@ -335,7 +335,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     /** Sayfadaki umit_native_video.js bunu window.UmitVideo olarak görür. Tüm çağrılar ana iş parçacığına alınır
      *  ve yalnızca REMOTE_URL sayfasından kabul edilir. */
     inner class VideoBridge {
-        private fun trusted(): Boolean { val u = web.url; return u != null && u.startsWith(REMOTE_URL) }
+        private fun trusted(): Boolean { val u = web.url; return u != null && (u.startsWith(REMOTE_URL) || u.startsWith("https://umitm0d.github.io/")) }
         private fun ui(f: () -> Unit) = runOnUiThread { if (trusted()) f() }
 
         @JavascriptInterface
