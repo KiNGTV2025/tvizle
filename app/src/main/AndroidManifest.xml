@@ -45,7 +45,7 @@
         <activity
             android:name=".PlayerActivity"
             android:exported="false"
-            android:screenOrientation="sensorLandscape"
+            android:screenOrientation="fullSensor"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density"/>
 
         <!-- İndirilen APK dosyasını sistem kurucusuna "content://" olarak güvenle göstermek için -->

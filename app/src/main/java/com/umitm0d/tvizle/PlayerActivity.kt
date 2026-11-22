@@ -120,7 +120,7 @@ class PlayerActivity : Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
         buildControls()
         setContentView(root)
-        mode = getSharedPreferences("umit_player", Context.MODE_PRIVATE).getInt("mode", 0).coerceIn(0, modeNames.size - 1)
+        mode = getSharedPreferences("umit_player", Context.MODE_PRIVATE).getInt("mode2", 2).coerceIn(0, modeNames.size - 1)
         root.setOnClickListener { if (controlsVisible) hideControls() else showControls() }
         root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fitVideo() }
         hideSystemUi()
@@ -129,13 +129,23 @@ class PlayerActivity : Activity() {
     // ───────────── Kontrol paneli ─────────────
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
+    /** Telefon / dikey / küçük ekran: düğmeleri küçült, çubuk yana kaydırılır. */
+    private fun compactUi(): Boolean {
+        val dm = resources.displayMetrics
+        val shortDp = minOf(dm.widthPixels, dm.heightPixels) / dm.density
+        return shortDp < 600f || dm.widthPixels < dm.heightPixels
+    }
+
     private fun makeBtn(label: String, onClick: () -> Unit): TextView {
         val t = TextView(this)
         t.text = label
         t.setTextColor(Color.WHITE)
-        t.textSize = 16f
+        val compact = compactUi()
+        t.textSize = if (compact) 14f else 16f
         t.gravity = Gravity.CENTER
-        t.setPadding(dp(14), dp(10), dp(14), dp(10))
+        t.minWidth = dp(if (compact) 44 else 56)
+        t.minHeight = dp(44)
+        t.setPadding(dp(if (compact) 10 else 14), dp(if (compact) 8 else 10), dp(if (compact) 10 else 14), dp(if (compact) 8 else 10))
         t.isFocusable = true
         t.isClickable = true
         fun bg(c: Int): GradientDrawable = GradientDrawable().apply {
@@ -288,7 +298,7 @@ class PlayerActivity : Activity() {
 
     private fun cycleMode() {
         mode = (mode + 1) % modeNames.size
-        getSharedPreferences("umit_player", Context.MODE_PRIVATE).edit().putInt("mode", mode).apply()
+        getSharedPreferences("umit_player", Context.MODE_PRIVATE).edit().putInt("mode2", mode).apply()
         updateModeLabel()
         fitVideo()
         showHint(modeNames[mode])
@@ -304,9 +314,9 @@ class PlayerActivity : Activity() {
     private val hintHide = Runnable { hint.visibility = View.GONE }
 
     private fun rotate() {
-        landscape = !landscape
+        landscape = resources.displayMetrics.widthPixels < resources.displayMetrics.heightPixels   // şu an dikeyse → yatay yap
         requestedOrientation = if (landscape) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        else ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
     }
 
     private fun showList(title: String, names: Array<String>, onPick: (Int) -> Unit) {
