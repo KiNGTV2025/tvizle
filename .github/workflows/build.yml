@@ -14,10 +14,19 @@ jobs:
         with: { distribution: temurin, java-version: 17 }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: "8.13" }
+      - name: Sürüm numarasını hesapla (1.6, 1.7, 1.8, 1.9, 2.0, 2.1 ...)
+        id: ver
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          N=$(gh release list --limit 1000 | wc -l)
+          V=$((16 + N))
+          echo "vcode=$V" >> "$GITHUB_OUTPUT"
+          echo "vname=$((V / 10)).$((V % 10))" >> "$GITHUB_OUTPUT"
       - name: Keystore'u hazırla
         run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
       - name: Derle ve imzala
-        run: gradle assembleRelease -Pvcode=$((100 + GITHUB_RUN_NUMBER)) -Pvname=1.$((GITHUB_RUN_NUMBER))
+        run: gradle assembleRelease -Pvcode=${{ steps.ver.outputs.vcode }} -Pvname=${{ steps.ver.outputs.vname }}
         env:
           KEYSTORE_FILE: ${{ runner.temp }}/release.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -37,6 +46,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VC=$((100 + GITHUB_RUN_NUMBER))
           cp app/build/outputs/apk/release/app-release.apk UmitTV.apk
-          gh release create "v$VC" UmitTV.apk --title "ÜmitTV 1.$GITHUB_RUN_NUMBER" --notes "Otomatik derleme" --latest
+          gh release create "v${{ steps.ver.outputs.vcode }}" UmitTV.apk --title "${{ steps.ver.outputs.vname }}" --notes "ÜmitTV ${{ steps.ver.outputs.vname }}" --latest

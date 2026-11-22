@@ -883,7 +883,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         } finally { conn.disconnect() }
     }
 
-    /** Her açılışta (en az 15 dk arayla) GitHub'daki son sürüme bakar; yeniyse sormadan indirip kurulum ekranını açar. */
+    /** Her açılışta (en az 15 dk arayla) GitHub'daki son sürüme bakar; yeniyse üstte "Güncelleme var" şeridi gösterir. */
     private fun maybeCheckForUpdate() {
         val sp = getSharedPreferences("umittv", MODE_PRIVATE)
         val last = sp.getLong("upd_last_check", 0L)
@@ -894,14 +894,17 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             try {
                 var remoteCode = -1
                 var url = ""
+                var vName = ""; var sizeB = 0L; var notes = ""
                 // 1) GitHub Releases: etiket "v<versionCode>", ek dosya UmitTV.apk
                 runCatching {
                     val j = JSONObject(httpGet(GITHUB_LATEST_API) ?: "")
                     remoteCode = Regex("\\d+").find(j.optString("tag_name", ""))?.value?.toIntOrNull() ?: -1
+                    vName = j.optString("name", "").ifBlank { j.optString("tag_name", "") }
+                    notes = j.optString("body", "")
                     val assets = j.optJSONArray("assets")
                     if (assets != null) for (k in 0 until assets.length()) {
                         val a = assets.getJSONObject(k)
-                        if (a.optString("name").endsWith(".apk", true)) { url = a.optString("browser_download_url"); break }
+                        if (a.optString("name").endsWith(".apk", true)) { url = a.optString("browser_download_url"); sizeB = a.optLong("size"); break }
                     }
                 }
                 // 2) yedek: eski update.json
@@ -909,13 +912,78 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                     val j = JSONObject(httpGet(UPDATE_MANIFEST_URL) ?: return@Thread)
                     remoteCode = j.optInt("versionCode", -1)
                     url = j.optString("url", "")
+                    vName = j.optString("versionName", ""); notes = j.optString("notes", "")
                 }
                 if (remoteCode <= currentVersionCode() || url.isBlank()) return@Thread
-                runOnUiThread { if (!isFinishing) beginDownload(url) }
+                if (sp.getInt("upd_dismissed", 0) >= remoteCode) return@Thread
+                val code = remoteCode; val u = url; val n = vName; val sz = sizeB; val nt = notes
+                runOnUiThread { if (!isFinishing) showUpdateBanner(u, n, sz, nt, code) }
             } catch (e: Exception) {
                 // sessizce geç: ağ yok / JSON bozuk / sunucu yok
             }
         }.start()
+    }
+
+    private var updBanner: android.view.View? = null
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    /** Nuvio tarzı üst şerit: sürüm • boyut, "Güncelleme var", bilgi (i), Güncelle, kapat (X). */
+    private fun showUpdateBanner(apkUrl: String, versionName: String, sizeBytes: Long, notes: String, code: Int) {
+        if (updBanner != null || isFinishing) return
+        val ver = versionName.trim().removePrefix("ÜmitTV").trim().ifBlank { "yeni sürüm" }
+        val title = buildString {
+            append(if (ver.firstOrNull()?.isDigit() == true) "v$ver" else ver)
+            if (sizeBytes > 0) append(" • ").append(Math.max(1L, Math.round(sizeBytes / 1048576.0))).append(" MB")
+        }
+        val sbH = resources.getIdentifier("status_bar_height", "dimen", "android").let { if (it > 0) resources.getDimensionPixelSize(it) else 0 }
+        val bar = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), dp(10), dp(8), dp(10))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.parseColor("#F2262A33")); cornerRadius = dp(16).toFloat()
+            }
+            elevation = dp(8).toFloat()
+        }
+        val texts = android.widget.LinearLayout(this).apply { orientation = android.widget.LinearLayout.VERTICAL }
+        texts.addView(android.widget.TextView(this).apply {
+            text = title; setTextColor(Color.WHITE); textSize = 17f; setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        texts.addView(android.widget.TextView(this).apply {
+            text = "Güncelleme var"; setTextColor(Color.parseColor("#B8BCC6")); textSize = 13f
+        })
+        bar.addView(texts, android.widget.LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        fun close() { (updBanner?.parent as? ViewGroup)?.removeView(updBanner); updBanner = null }
+        bar.addView(android.widget.TextView(this).apply {
+            text = "ⓘ"; setTextColor(Color.WHITE); textSize = 22f; gravity = Gravity.CENTER
+            setPadding(dp(10), dp(4), dp(10), dp(4)); isFocusable = true; isClickable = true
+            setOnClickListener {
+                AlertDialog.Builder(this@MainActivity).setTitle("Güncelleme $title")
+                    .setMessage(if (notes.isNotBlank()) notes else "Uygulamanın yeni bir sürümü hazır.")
+                    .setPositiveButton("Tamam", null).show()
+            }
+        })
+        bar.addView(android.widget.TextView(this).apply {
+            text = "Güncelle"; setTextColor(Color.BLACK); textSize = 15f; gravity = Gravity.CENTER
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(dp(18), dp(10), dp(18), dp(10)); isFocusable = true; isClickable = true
+            background = android.graphics.drawable.GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = dp(22).toFloat() }
+            setOnClickListener { close(); beginDownload(apkUrl) }
+        }, android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(4) })
+        bar.addView(android.widget.TextView(this).apply {
+            text = "✕"; setTextColor(Color.WHITE); textSize = 20f; gravity = Gravity.CENTER
+            setPadding(dp(12), dp(4), dp(12), dp(4)); isFocusable = true; isClickable = true
+            setOnClickListener {
+                getSharedPreferences("umittv", MODE_PRIVATE).edit().putInt("upd_dismissed", code).apply()
+                close()
+            }
+        })
+        val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP)
+            .apply { setMargins(dp(10), sbH + dp(6), dp(10), 0) }
+        updBanner = bar
+        root.addView(bar, lp)
+        bar.bringToFront()
     }
 
     private fun showUpdateDialog(apkUrl: String, versionName: String, notes: String) {
