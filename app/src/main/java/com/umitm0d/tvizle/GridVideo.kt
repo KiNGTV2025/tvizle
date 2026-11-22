@@ -77,6 +77,7 @@ class GridVideo(
     private fun ensurePlayer(i: Int, c: Cell): ExoPlayer {
         c.player?.let { return it }
         val renderers = DecoderTweaks.renderers(act).setEnableDecoderFallback(true)
+            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
         val lc = DefaultLoadControl.Builder().setBufferDurationsMs(8000, 20000, 1500, 3000).build()
         val p = ExoPlayer.Builder(act, renderers)
             .setLoadControl(lc)
@@ -185,6 +186,7 @@ class GridVideo(
         val c = cell(i) ?: return
         c.muted = muted
         c.player?.volume = if (muted) 0f else 1f
+        android.widget.Toast.makeText(act, "SES-TANI kutu " + (i + 1) + ": " + (if (muted) "SESSİZ" else "AÇIK"), android.widget.Toast.LENGTH_SHORT).show()
     }
 
     fun stop(i: Int) {

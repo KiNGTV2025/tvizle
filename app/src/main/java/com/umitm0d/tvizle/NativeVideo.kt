@@ -170,7 +170,14 @@ class NativeVideo(
                 }
                 pushState()
             }
-            override fun onTracksChanged(tracks: Tracks) = pushTracks(tracks)
+            override fun onTracksChanged(tracks: Tracks) {
+                pushTracks(tracks)
+                if (audioRefs.isEmpty()) {
+                    val bad = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO && !it.isSupported }
+                    if (bad.isNotEmpty()) send(JSONObject().put("t", "dbg")
+                        .put("m", "Ses codec'i desteklenmiyor: " + (bad[0].getTrackFormat(0).sampleMimeType ?: "?")))
+                }
+            }
             override fun onRenderedFirstFrame() {
                 firstFrame = true
                 send(JSONObject().put("t", "rf"))
@@ -187,6 +194,12 @@ class NativeVideo(
             override fun onDroppedVideoFrames(eventTime: AnalyticsListener.EventTime, droppedFrames: Int, elapsedMs: Long) {
                 dropped += droppedFrames
             }
+            override fun onAudioSinkError(eventTime: AnalyticsListener.EventTime, audioSinkError: Exception) {
+                healAudio("ses çıkışı hatası")
+            }
+            override fun onAudioCodecError(eventTime: AnalyticsListener.EventTime, audioCodecError: Exception) {
+                healAudio("ses dekoder hatası")
+            }
             override fun onVideoDecoderInitialized(eventTime: AnalyticsListener.EventTime, decoderName: String,
                                                    initializedTimestampMs: Long, initializationDurationMs: Long) {
                 decName = decoderName
@@ -200,7 +213,41 @@ class NativeVideo(
         applyVolume(p)
         p.setPlaybackSpeed(rate)
         player = p
+        if (!ffmpegChecked) {   // teşhis: FFmpeg ses dekoderi yüklendi mi (bir kez bildirir)
+            ffmpegChecked = true
+            val ok = runCatching {
+                Class.forName("androidx.media3.decoder.ffmpeg.FfmpegLibrary").getMethod("isAvailable").invoke(null) as? Boolean
+            }.getOrNull()
+            send(JSONObject().put("t", "dbg").put("m", "FFmpeg ses: " + when (ok) { true -> "AÇIK"; false -> "yüklenemedi"; else -> "pakette yok" }))
+        }
+        handler.removeCallbacks(healRun); handler.postDelayed(healRun, 5000)
         return p
+    }
+
+    // Ses kendiliğinden kesilirse (ses parçası/dekoder düşmüş ama video akıyor) ses hattını yeniden kur
+    private var lastHeal = 0L
+    private var ffmpegChecked = false
+    private val healRun = object : Runnable {
+        override fun run() {
+            val p = player
+            if (p != null && loaded && p.playbackState == Player.STATE_READY && p.playWhenReady &&
+                p.audioFormat == null && audioRefs.isNotEmpty()) healAudio("ses parçası çalmıyor")
+            handler.postDelayed(this, 5000)
+        }
+    }
+    private fun healAudio(why: String) {
+        val p = player ?: return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastHeal < 8000L) return
+        lastHeal = now
+        p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true).build()
+        handler.postDelayed({
+            player?.let {
+                it.trackSelectionParameters = it.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false).build()
+                applyVolume(it)
+            }
+        }, 300)
+        send(JSONObject().put("t", "dbg").put("m", "Ses yeniden başlatılıyor: $why"))
     }
 
     private fun buildSource(url: String, ua: String, referer: String, kind: String): androidx.media3.exoplayer.source.MediaSource {
@@ -295,7 +342,9 @@ class NativeVideo(
     fun volume(v: Double, m: Boolean) {
         // grid kapandıktan hemen sonra gelen "sessize al" çağrısı (sayfanın eski durumu) yok sayılır
         if (m && android.os.SystemClock.elapsedRealtime() - gridEndAt < 1500L) return
+        val was = muted
         volume = v.toFloat().coerceIn(0f, 1f); muted = m; player?.let { applyVolume(it) }
+        if (m != was) android.widget.Toast.makeText(act, "SES-TANI ana: " + (if (m) "SESSİZ" else "AÇIK") + " (sayfa istedi, vol=" + (volume * 100).toInt() + ")", android.widget.Toast.LENGTH_SHORT).show()
     }
     fun rate(r: Double) { rate = if (r > 0) r.toFloat() else 1f; player?.setPlaybackSpeed(rate) }
     fun retry() {

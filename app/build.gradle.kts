@@ -49,7 +49,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-common:2.6.2")
     implementation("androidx.core:core-ktx:1.13.1")
     // Kendi oynatıcımız (Televizo da ExoPlayer motorunu kullanıyor; bu açık kaynak sürümü)
-    // Media3 1.11.1 = en güncel KARARLI sürüm (1.12 henüz beta ve minSdk 24 istiyor; 1.9+ zaten minSdk 23 ister)
+    // Media3 1.11.1 = en güncel KARARLI sürüm (10 Eylül 2026). FFmpeg ses dekoderi ile AYNI sürüm olmalı; ikisi birlikte yükseltilir.
+    // (1.12 henüz kararlı değil ve minSdk 24 ister; uygulama minSdk 23)
     val media3 = "1.11.1"
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-exoplayer-hls:$media3")
@@ -58,4 +59,8 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-rtsp:$media3")
     implementation("androidx.media3:media3-ui:$media3")
     implementation("androidx.media3:media3-datasource-rtmp:$media3")
+    // FFmpeg ses dekoderi (media3 1.11.1 ile birebir eşleşen sürüm, LGPL FFmpeg derlemesi): AC3/E-AC3/DTS/AAC/MP3/Opus/Vorbis/FLAC vb.
+    // DefaultRenderersFactory (EXTENSION_RENDERER_MODE_PREFER) bunu sınıf yolunda bulunca kendisi yükler.
+    implementation("io.put:media3-ffmpeg-decoder:1.11.1+1")
+    // Çözülemezse yedek (GPLv3, 1.9.0+1; 1.11.1 ile çalıştığı üçüncü kişilerce bildirildi): implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.9.0+1")
 }
