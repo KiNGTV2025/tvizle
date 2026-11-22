@@ -49,9 +49,14 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-common:2.6.2")
     implementation("androidx.core:core-ktx:1.13.1")
     // Kendi oynatıcımız (Televizo da ExoPlayer motorunu kullanıyor; bu açık kaynak sürümü)
-    // Media3 1.11.1 = en güncel KARARLI sürüm (10 Eylül 2026). FFmpeg ses dekoderi ile AYNI sürüm olmalı; ikisi birlikte yükseltilir.
-    // (1.12 henüz kararlı değil ve minSdk 24 ister; uygulama minSdk 23)
-    val media3 = "1.11.1"
+    // GERİ ALINDI (build log'da görüldü): io.put:media3-ffmpeg-decoder:1.11.1+1 kendi AndroidManifest'inde
+    // minSdk 26 istiyor → "uses-sdk:minSdkVersion 23 cannot be smaller than version 26" ile derleme patlıyor,
+    // çünkü uygulama minSdk 23 (eski TV box'lar için). io.put'ın şu an minSdk 23 ile uyumlu sürümü yok.
+    // Bu yüzden media3 1.9.0 + onunla AYNI sürümde, minSdk 23 ile derlendiği doğrulanan Jellyfin FFmpeg
+    // dekoderine (org.jellyfin.media3:media3-ffmpeg-decoder:1.9.0+1, GPLv3) dönüldü. "En güncel" isteniyorsa
+    // tek yol: minSdk'yı 26'ya çıkarıp io.put:media3-ffmpeg-decoder:1.11.1+1'e geri dönmek (Android 6/7 TV
+    // box'ları artık açılmaz) — isterseniz bunu yaparım, söylemeniz yeterli.
+    val media3 = "1.9.0"
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-exoplayer-hls:$media3")
     implementation("androidx.media3:media3-exoplayer-dash:$media3")
@@ -59,8 +64,8 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-rtsp:$media3")
     implementation("androidx.media3:media3-ui:$media3")
     implementation("androidx.media3:media3-datasource-rtmp:$media3")
-    // FFmpeg ses dekoderi (media3 1.11.1 ile birebir eşleşen sürüm, LGPL FFmpeg derlemesi): AC3/E-AC3/DTS/AAC/MP3/Opus/Vorbis/FLAC vb.
-    // DefaultRenderersFactory (EXTENSION_RENDERER_MODE_PREFER) bunu sınıf yolunda bulunca kendisi yükler.
-    implementation("io.put:media3-ffmpeg-decoder:1.11.1+1")
-    // Çözülemezse yedek (GPLv3, 1.9.0+1; 1.11.1 ile çalıştığı üçüncü kişilerce bildirildi): implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.9.0+1")
+    // FFmpeg ses dekoderi (media3 1.9.0 ile aynı sürüm, minSdk 23 uyumlu, GPLv3 FFmpeg derlemesi):
+    // AC3/E-AC3/DTS/AAC/MP3/Opus/Vorbis/FLAC vb. DefaultRenderersFactory (EXTENSION_RENDERER_MODE_PREFER)
+    // bunu sınıf yolunda bulunca kendisi yükler.
+    implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.9.0+1")
 }
