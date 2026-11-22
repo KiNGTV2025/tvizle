@@ -66,6 +66,8 @@ class NativeVideo(
     private var retries = 0
     private var curUrl = ""
     private var fitMode = "contain"
+    private var altTried = false
+    private var lastUa = ""; private var lastRef = ""; private var lastKind = ""
     private var videoRatio = 0f
     private var dropped = 0
     private var volume = 1f
@@ -165,6 +167,7 @@ class NativeVideo(
     fun load(url: String, ua: String, referer: String, startMs: Long, autoplay: Boolean, kind: String) {
         val p = ensurePlayer()
         curUrl = url; everReady = false; retries = 0; dropped = 0
+        altTried = false; lastUa = ua; lastRef = referer; lastKind = kind
         levelRefs = emptyList(); audioRefs = emptyList(); videoRatio = 0f
         loaded = true
         handler.removeCallbacks(retryRun)
@@ -384,6 +387,15 @@ class NativeVideo(
             return
         }
         val code = e.errorCode
+        if (!everReady && !altTried && code in 3000..3999) {   // yayın türü yanlış tahmin edildi (HLS ↔ düz TS): bir kez diğer türle dene
+            altTried = true
+            val nk = if (lastKind == "hls") "raw" else "hls"
+            lastKind = nk
+            p.setMediaSource(buildSource(curUrl, lastUa, lastRef, nk))
+            p.playWhenReady = true
+            p.prepare()
+            return
+        }
         val cat = when {
             code == PlaybackException.ERROR_CODE_TIMEOUT ||
                 code == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT -> "timeout"

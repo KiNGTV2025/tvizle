@@ -989,6 +989,7 @@ attempt(start);};CorsLoader.prototype.abort=function(){this.aborted=true;for(var
     markActive(true);
     B.volume(S.vol, S.muted); B.rate(S.rate);
     log('load', why || '', url);
+    S.ld = { url: url, ua: ua, ref: ref, kind: why || '', alt: false };
     B.load(url, ua, ref, 0, !!auto, why || '');
     try {   // köprü komutu native tarafa ulaşıyor mu? 6 sn içinde hiç durum gelmezse nedenini göster
       var tok = S;
@@ -1224,6 +1225,17 @@ attempt(start);};CorsLoader.prototype.abort=function(){this.aborted=true;for(var
     if (j.lvc != null && j.lvc !== S.level) { S.level = j.lvc; if (hlsActive) hlsActive.emit(HE.LEVEL_SWITCHED, { level: S.level }); }
   }
   function onError(j) {
+    try {   // yayın türü yanlış tahmin edildiyse (zorla HLS ↔ düz TS) bir kez diğer türle dene; sayfaya hata dönmeden
+      var L = S.ld;
+      if (L && !L.alt && !S.meta && (j.cat === 'parse' || j.cat === 'other')) {
+        L.alt = true;
+        var nk = (L.kind === 'hls') ? 'raw' : 'hls';
+        log('tür değiştirilip yeniden deneniyor:', L.kind, '→', nk);
+        L.kind = nk; S.err = null; S.st = 0;
+        B.load(L.url, L.ua, L.ref, 0, true, nk);
+        return;
+      }
+    } catch (e) {}
     S.st = 0; S.err = { code: j.cat === 'net' || j.cat === 'timeout' ? 2 : (j.cat === 'decode' || j.cat === 'parse' ? 3 : 4), message: j.m || '', MEDIA_ERR_ABORTED: 1, MEDIA_ERR_NETWORK: 2, MEDIA_ERR_DECODE: 3, MEDIA_ERR_SRC_NOT_SUPPORTED: 4 };
     log('hata', j.cat, j.c, j.m);
     try { var tn = now(); if (!window.__umitExoErrT || tn - window.__umitExoErrT > 4000) { window.__umitExoErrT = tn; toast('ExoPlayer: ' + (j.cat || '') + ' ' + (j.c || '') + ' ' + String(j.m || '').slice(0, 90), 'err'); } } catch (e) {}
