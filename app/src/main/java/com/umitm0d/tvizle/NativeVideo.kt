@@ -302,12 +302,14 @@ class NativeVideo(
     // Kutu HDMI çıkışı 1080p iken 4K video küçültülerek ekrana verilir; ucuz SoC'lerde bu yol bozuk/renkli görüntü üretir.
     // 4K video açılınca (ve ekran 4K modu destekliyorsa) çıkış modu 3840x2160'a alınır, 4K'dan çıkınca eski moda dönülür.
     private var dispModeSet = false
+    // TextureView yolu 4K'yı GPU ile ekrana ölçekliyor; ekranı 4K'ya almak GPU'yu (WebView + 4K katman) gereksiz yoruyor ve kasıyor. Kapalı.
+    private val AUTO_4K_MODE = false
     private fun applyDisplayMode(h: Int) {
         if (android.os.Build.VERSION.SDK_INT < 23) return
         try {
             val w = act.window
             val lp = w.attributes
-            if (h >= 2000 && !dispModeSet) {
+            if (AUTO_4K_MODE && h >= 2000 && !dispModeSet) {
                 @Suppress("DEPRECATION")
                 val d = act.windowManager.defaultDisplay
                 val cur = d.mode
@@ -380,6 +382,7 @@ class NativeVideo(
     }
 
     /** Sayfanın #vid dikdörtgeni (CSS px) → cihaz pikseli. iw/ih: sayfanın window.innerWidth/innerHeight'i. */
+    private var rectPend: Runnable? = null
     fun rect(x: Double, y: Double, w: Double, h: Double, iw: Double, ih: Double, show: Boolean, fit: String) {
         fitMode = fit
         showWanted = show
@@ -387,14 +390,25 @@ class NativeVideo(
         val sy = if (ih > 0 && web.height > 0) web.height / ih else 1.0
         val nx = (x * sx).toInt(); val ny = (y * sy).toInt()
         val nw = (w * sx).toInt().coerceAtLeast(0); val nh = (h * sy).toInt().coerceAtLeast(0)
-        val lp = holder.layoutParams as FrameLayout.LayoutParams
-        if (lp.leftMargin != nx || lp.topMargin != ny || lp.width != nw || lp.height != nh) {
-            lp.gravity = Gravity.TOP or Gravity.START
-            lp.leftMargin = nx; lp.topMargin = ny; lp.width = nw; lp.height = nh
-            holder.layoutParams = lp
+        val apply = Runnable {
+            rectPend = null
+            val lp = holder.layoutParams as FrameLayout.LayoutParams
+            if (lp.leftMargin != nx || lp.topMargin != ny || lp.width != nw || lp.height != nh) {
+                lp.gravity = Gravity.TOP or Gravity.START
+                lp.leftMargin = nx; lp.topMargin = ny; lp.width = nw; lp.height = nh
+                holder.layoutParams = lp
+            }
+            refreshVisibility()
+            applyFit()
         }
-        refreshVisibility()
-        applyFit()
+        rectPend?.let { handler.removeCallbacks(it); rectPend = null }
+        val cur = holder.layoutParams
+        // 4K (TextureView): sayfa animasyonu (kanal listesi açılırken) 100 ms'de bir yeni boyut gönderiyor; her biri
+        // yerleşim + GPU yeniden çizimi demek ve zayıf kutuda donma yapıyor. Animasyon bitince tek seferde uygula.
+        if (useTex && show && cur.width > 0 && cur.height > 0 && nw > 0 && nh > 0) {
+            rectPend = apply
+            handler.postDelayed(apply, 180)
+        } else apply.run()
     }
 
     fun background(color: Int) { root.setBackgroundColor(color) }
