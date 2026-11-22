@@ -49,7 +49,7 @@ import java.net.URL
 
 /** ÜmitTV – REMOTE_URL'deki sayfayı tam ekran WebView'de açar (sayfa APK'nın içinde gömülü değil).
  *  v1.1: mikrofon (sesli komut), dosya ekleme, direksiyon tuşlarıyla kanal değiştirme. */
-class MainActivity : Activity() {
+open class MainActivity : Activity() {
 
     companion object {
         private const val REQ_FILE = 4101

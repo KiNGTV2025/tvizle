@@ -10,6 +10,9 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
     <!-- Uygulama içi güncelleme: yeni sürümü indirip kurabilmek için -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    <!-- Android Auto (araç ekranı) -->
+    <uses-permission android:name="androidx.car.app.ACCESS_SURFACE"/>
+    <uses-permission android:name="androidx.car.app.NAVIGATION_TEMPLATES"/>
     <uses-feature android:name="android.hardware.microphone" android:required="false"/>
 
     <uses-feature android:name="android.software.leanback" android:required="false"/>
@@ -28,6 +31,28 @@
         android:requestLegacyExternalStorage="true"
         android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+        <meta-data android:name="com.google.android.gms.car.application" android:resource="@xml/automotive_app_desc"/>
+        <meta-data android:name="androidx.car.app.minCarApiLevel" android:value="5"/>
+
+        <service
+            android:name=".UmitCarService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.car.app.CarAppService"/>
+                <category android:name="androidx.car.app.category.NAVIGATION"/>
+            </intent-filter>
+        </service>
+
+        <!-- Araç ekranındaki sanal ekranda açılan ÜmitTV arayüzü -->
+        <activity
+            android:name=".CarMainActivity"
+            android:exported="false"
+            android:launchMode="standard"
+            android:taskAffinity="com.umitm0d.tvizle.car"
+            android:resizeableActivity="true"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density"/>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

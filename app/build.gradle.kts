@@ -41,6 +41,9 @@ android {
     kotlinOptions { jvmTarget = "17" }
 }
 dependencies {
+    // Android Auto (Car App Library)
+    implementation("androidx.car.app:app:1.4.0")
+    implementation("androidx.lifecycle:lifecycle-common:2.6.2")
     implementation("androidx.core:core-ktx:1.13.1")
     // Kendi oynatıcımız (Televizo da ExoPlayer motorunu kullanıyor; bu açık kaynak sürümü)
     implementation("androidx.media3:media3-exoplayer:1.3.1")
