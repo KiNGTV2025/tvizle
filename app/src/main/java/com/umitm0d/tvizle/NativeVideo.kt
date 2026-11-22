@@ -27,6 +27,8 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
@@ -76,6 +78,18 @@ class NativeVideo(
     private var showWanted = false
     private var resumeOnStart = false
 
+    // Görüntü gelmeme koruması: ses çalıp ilk video karesi çizilmezse (donanım dekoder sorunu) yazılım dekoderine geç
+    private var preferSw = false          // bir kez gerekirse sonraki yayınlarda da yazılım dekoder öncelikli
+    private var firstFrame = false
+    private var readySince = 0L
+    private var swTried = false
+    private var hasVideoTrack = false
+    private val codecSelector = MediaCodecSelector { mime, secure, tunneling ->
+        val list = MediaCodecSelector.DEFAULT.getDecoderInfos(mime, secure, tunneling)
+        if (!preferSw || !mime.startsWith("video/")) list
+        else list.sortedBy { i: MediaCodecInfo -> if (i.softwareOnly || i.name.startsWith("c2.android.") || i.name.startsWith("OMX.google.")) 0 else 1 }
+    }
+
     private var levelRefs: List<Pair<Tracks.Group, Int>> = emptyList()
     private var audioRefs: List<Tracks.Group> = emptyList()
 
@@ -94,6 +108,7 @@ class NativeVideo(
     private fun ensurePlayer(): ExoPlayer {
         player?.let { return it }
         val renderers = DefaultRenderersFactory(act)
+            .setMediaCodecSelector(codecSelector)
             .setEnableDecoderFallback(true)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
         val loadControl = DefaultLoadControl.Builder()
@@ -122,6 +137,10 @@ class NativeVideo(
                 pushState()
             }
             override fun onTracksChanged(tracks: Tracks) = pushTracks(tracks)
+            override fun onRenderedFirstFrame() {
+                firstFrame = true
+                send(JSONObject().put("t", "rf"))
+            }
             override fun onPlayerError(error: PlaybackException) = handleError(error)
         })
         p.addAnalyticsListener(object : AnalyticsListener {
@@ -168,6 +187,7 @@ class NativeVideo(
         val p = ensurePlayer()
         curUrl = url; everReady = false; retries = 0; dropped = 0
         altTried = false; lastUa = ua; lastRef = referer; lastKind = kind
+        firstFrame = false; readySince = 0L; swTried = false; hasVideoTrack = false
         levelRefs = emptyList(); audioRefs = emptyList(); videoRatio = 0f
         loaded = true
         handler.removeCallbacks(retryRun)
@@ -289,8 +309,43 @@ class NativeVideo(
         override fun run() {
             if (!loaded) return
             pushState()
+            checkFirstFrame()
             handler.postDelayed(this, TICK_MS)
         }
+    }
+
+    private fun checkFirstFrame() {
+        val p = player ?: return
+        if (firstFrame || !hasVideoTrack) return
+        if (p.playbackState == Player.STATE_READY && p.playWhenReady) {
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (readySince == 0L) { readySince = now; return }
+            if (now - readySince > 4500) {
+                readySince = now
+                if (!swTried) { swTried = true; rebuildSoftware() }
+                else if (preferSw) {
+                    val f = p.videoFormat
+                    send(JSONObject().put("t", "dbg").put("m", "Video çözülemedi: " + (f?.sampleMimeType ?: "?") + " " + (f?.width ?: 0) + "x" + (f?.height ?: 0)))
+                    swTried = false; readySince = Long.MAX_VALUE / 2   // tekrar mesaj verme
+                }
+            }
+        } else readySince = 0L
+    }
+
+    /** Donanım dekoder görüntü vermediyse: oynatıcıyı yazılım dekoder öncelikli yeniden kur, kaldığı yerden devam et. */
+    private fun rebuildSoftware() {
+        val old = player ?: return
+        val pos = old.currentPosition
+        val live = old.isCurrentMediaItemLive
+        preferSw = true
+        handler.removeCallbacks(retryRun)
+        old.release(); player = null
+        val p = ensurePlayer()
+        p.setMediaSource(buildSource(curUrl, lastUa, lastRef, lastKind))
+        if (!live && pos > 1000) p.seekTo(pos)
+        p.playWhenReady = true
+        p.prepare()
+        send(JSONObject().put("t", "dbg").put("m", "Yazılım dekoder deneniyor…"))
     }
 
     private val retryRun = Runnable {
@@ -350,6 +405,7 @@ class NativeVideo(
             for (i in 0 until g.length) if (g.isTrackSupported(i)) levels.add(Pair(g, i))
         }
         levelRefs = levels
+        hasVideoTrack = tracks.groups.any { it.type == C.TRACK_TYPE_VIDEO }
         val audios = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO && it.isSupported }
         audioRefs = audios
 
