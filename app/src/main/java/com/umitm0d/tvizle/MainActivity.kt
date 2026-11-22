@@ -1003,7 +1003,8 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 updDbg("GitHub HTTP $ghHttp, uzak=$remoteCode, yerel=${currentVersionCode()}, apk=${if (url.isBlank()) "yok" else "var"}, token=${if (REL_TOKEN.isBlank()) "YOK" else "var"}")
                 if (remoteCode <= currentVersionCode() || url.isBlank()) return@Thread
                 if (sp.getInt("upd_dismissed", 0) >= remoteCode) return@Thread
-                if (System.currentTimeMillis() < sp.getLong("upd_snooze_until", 0L)) return@Thread
+                // "Sonra"/iptal bekletmesi yalnızca O sürüm için geçerli; daha yeni bir sürüm çıkınca hemen gösterilir
+                if (System.currentTimeMillis() < sp.getLong("upd_snooze_until", 0L) && remoteCode <= sp.getInt("upd_snooze_code", 0)) return@Thread
                 val code = remoteCode; val u = url; val n = vName; val sz = sizeB; val nt = notes
                 runOnUiThread { if (!isFinishing) showUpdateBanner(u, n, sz, nt, code) }
             } catch (e: Exception) {
@@ -1047,7 +1048,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     /** "Sonra": bu sürümü kalıcı susturmaz, 6 saat sonra tekrar hatırlatır. */
     private fun snoozeUpdate() {
         getSharedPreferences("umittv", MODE_PRIVATE).edit()
-            .putLong("upd_snooze_until", System.currentTimeMillis() + 6L * 60 * 60 * 1000).apply()
+            .putLong("upd_snooze_until", System.currentTimeMillis() + 6L * 60 * 60 * 1000).putInt("upd_snooze_code", updArgs?.code ?: Int.MAX_VALUE).apply()
         closeUpdateBanner(false)
     }
 
@@ -1092,7 +1093,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     /** Güncelleme bitti: modal yukarı çıkıp kaybolur. İptal edilen kurulum için 10 dk sonra tekrar hatırlatır. */
     private fun finishUpdateModal() {
         getSharedPreferences("umittv", MODE_PRIVATE).edit()
-            .putLong("upd_snooze_until", System.currentTimeMillis() + 10L * 60 * 1000).apply()
+            .putLong("upd_snooze_until", System.currentTimeMillis() + 10L * 60 * 1000).putInt("upd_snooze_code", updArgs?.code ?: Int.MAX_VALUE).apply()
         closeUpdateBanner(false)
     }
 
