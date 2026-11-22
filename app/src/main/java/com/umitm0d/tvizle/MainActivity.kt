@@ -1089,7 +1089,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
         val card = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.VERTICAL
-            setPadding(dp(14), dp(12), dp(14), dp(12))
+            setPadding(dp(12), dp(8), dp(12), dp(8))
             background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
                 intArrayOf(Color.parseColor("#FF2A231B"), Color.parseColor("#FF15120E"))).apply {
                 cornerRadius = dp(22).toFloat(); setStroke(dp(1), Color.parseColor("#55F97316"))
@@ -1108,7 +1108,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(12).toFloat()) }
             }
         }
-        row.addView(icon, android.widget.LinearLayout.LayoutParams(dp(44), dp(44)))
+        row.addView(icon, android.widget.LinearLayout.LayoutParams(dp(38), dp(38)))
         val texts = android.widget.LinearLayout(this).apply { orientation = android.widget.LinearLayout.VERTICAL }
         texts.addView(android.widget.TextView(this).apply {
             text = "Yeni sürüm hazır"; setTextColor(Color.WHITE); textSize = 16f
@@ -1166,10 +1166,10 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
         // sayfayı kartın altına it: kart hiçbir butonun üstüne binmesin
         card.addOnLayoutChangeListener { _, _, _, _, b, _, _, _, _ ->
-            if (updBanner === card) animateWebTop(b + dp(6))
+            if (updBanner === card) animateWebTop(b)
         }
         val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP)
-            .apply { setMargins(dp(10), sbH + dp(6), dp(10), 0) }
+            .apply { setMargins(dp(8), sbH + dp(2), dp(8), dp(2)) }
         root.addView(card, lp)
         card.bringToFront()
 
