@@ -1,0 +1,10 @@
+name = "umittv-update"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+REPO = "KiNGTV2025/tvizle-releases"
+
+# Secret'lar (komutla eklenir, dosyaya yazılmaz):
+#   npx wrangler secret put GH_TOKEN     # depoyu okuyabilen token (depo herkese açıksa gerekmez)
+#   npx wrangler secret put APP_KEY      # isteğe bağlı: uygulamayla aynı gizli anahtar

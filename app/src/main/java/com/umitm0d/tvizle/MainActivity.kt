@@ -87,7 +87,13 @@ open class MainActivity : Activity() {
         /** Güncelleme bilgisini buradan okur: {"versionCode":3,"versionName":"1.2","url":"https://.../UmitTV.apk","notes":"..."} */
         private val UPDATE_MANIFEST_URL = deobf("Mi8oLS1lT04XDg0RC1cMRw0CGAUbDV4YHVw1GRccGQsOVAkQFwv099329OHn8+2n4Pjj4w==", OBF_KEY)
         private val TRUSTED_PREFIX = deobf("Mi8oLS1lT04XDg0RC1cMRw0CGAUbDV4YHVw=", OBF_KEY)
-        private const val UPDATE_CHECK_MIN_GAP_MS = 1L * 60 * 1000   // deneme: en az 1 dakikada bir kontrol et
+        private const val UPDATE_CHECK_MIN_GAP_MS = 10L * 1000   // en az 10 sn arayla kontrol (Worker önbellekli, ucuz)
+        /** Uygulama açıkken kaç sn'de bir yeni sürüme bakılır. */
+        private const val UPDATE_POLL_MS = 15L * 1000
+        /** Cloudflare Worker adresi (worker.js). Örn: "https://umittv-update.KULLANICI.workers.dev". Boşsa doğrudan GitHub'a bakılır. */
+        private const val UPDATE_WORKER_URL = "https://gncel.umitm0d.workers.dev"
+        /** Worker'da APP_KEY secret'ı tanımlıysa buraya aynısını yaz; yoksa boş bırak. */
+        private const val UPDATE_WORKER_KEY = ""
         private val REL_TOKEN: String by lazy { if (BuildConfig.REL_TOKEN.isBlank()) "" else deobf(BuildConfig.REL_TOKEN, OBF_KEY) }
         private const val GITHUB_LATEST_API = "https://api.github.com/repos/KiNGTV2025/tvizle-releases/releases/latest"
 
@@ -878,11 +884,13 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             runCatching { registerReceiver(mediaBtnReceiver, f); btnReceiverOn = true }
         }
         maybeCheckForUpdate()
+        startUpdateWatch()
         checkPendingInstallResume()
         ensureUpdBanner()
     }
 
     override fun onPause() {
+        stopUpdateWatch()
         mediaSession?.isActive = false           // arka plandayken müzik/navigasyon uygulamasının tuşlarını çalma
         if (btnReceiverOn) { runCatching { unregisterReceiver(mediaBtnReceiver) }; btnReceiverOn = false }
         destroyRecognizer()
@@ -936,6 +944,22 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         } finally { conn.disconnect() }
     }
 
+    /** Uygulama ön plandayken UPDATE_POLL_MS'de bir yeni sürüm kontrolü (yeni release yayınlanır yayınlanmaz şerit çıkar). */
+    private var updWatchOn = false
+    private val updWatch = object : Runnable {
+        override fun run() {
+            if (!updWatchOn || isFinishing) return
+            maybeCheckForUpdate()
+            uiHandler.postDelayed(this, UPDATE_POLL_MS)
+        }
+    }
+    private fun startUpdateWatch() {
+        if (updWatchOn) return
+        updWatchOn = true
+        uiHandler.postDelayed(updWatch, UPDATE_POLL_MS)
+    }
+    private fun stopUpdateWatch() { updWatchOn = false; uiHandler.removeCallbacks(updWatch) }
+
     /** Her açılışta (en az 15 dk arayla) GitHub'daki son sürüme bakar; yeniyse üstte "Güncelleme var" şeridi gösterir. */
     private fun maybeCheckForUpdate() {
         val sp = getSharedPreferences("umittv", MODE_PRIVATE)
@@ -948,8 +972,16 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 var remoteCode = -1
                 var url = ""
                 var vName = ""; var sizeB = 0L; var notes = ""
-                // 1) GitHub Releases: etiket "v<versionCode>", ek dosya UmitTV.apk
-                runCatching {
+                // 0) Cloudflare Worker: anlık, tek istek, GitHub limiti/token gerektirmez
+                if (UPDATE_WORKER_URL.isNotBlank()) runCatching {
+                    val q = if (UPDATE_WORKER_KEY.isNotBlank()) "?k=" + UPDATE_WORKER_KEY else ""
+                    val j = JSONObject(httpGet(UPDATE_WORKER_URL.trimEnd('/') + "/latest" + q) ?: "")
+                    remoteCode = j.optInt("versionCode", -1)
+                    url = j.optString("url", "")
+                    vName = j.optString("versionName", ""); notes = j.optString("notes", ""); sizeB = j.optLong("size")
+                }
+                // 1) GitHub Releases (Worker yoksa/çalışmazsa): etiket "v<versionCode>", ek dosya UmitTV.apk
+                if (remoteCode <= 0 || url.isBlank()) runCatching {
                     val j = JSONObject(httpGet(GITHUB_LATEST_API) ?: "")
                     remoteCode = Regex("\\d+").find(j.optString("tag_name", ""))?.value?.toIntOrNull() ?: -1
                     vName = j.optString("name", "").ifBlank { j.optString("tag_name", "") }
