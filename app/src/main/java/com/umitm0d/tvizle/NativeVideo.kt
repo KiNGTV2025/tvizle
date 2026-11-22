@@ -92,6 +92,8 @@ class NativeVideo(
     private var everReady = false
     private var retries = 0
     private var curUrl = ""
+    /** Kayıt için: oynatıcının şu an kullandığı (çözülmüş) adres ve başlıkları. */
+    fun recSource(): Array<String> = arrayOf(curUrl, lastUa, lastRef)
     private var fitMode = "contain"
     private var altTried = false
     private var lastUa = ""; private var lastRef = ""; private var lastKind = ""

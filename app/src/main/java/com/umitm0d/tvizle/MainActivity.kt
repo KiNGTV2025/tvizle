@@ -486,7 +486,49 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
         @JavascriptInterface
         fun load(url: String, ua: String, referer: String, startMs: Double, autoplay: Boolean, kind: String) = ui {
-            if (url.startsWith("http://") || url.startsWith("https://")) nv.load(url, ua, referer, startMs.toLong(), autoplay, kind)
+            if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("file:///")) nv.load(url, ua, referer, startMs.toLong(), autoplay, kind)
+        }
+
+        // ── Canlı yayın kaydı (yerel): ExoPlayer'ın oynattığı adresi dosyaya indirir ──
+        private val recDir by lazy { (getExternalFilesDir("kayitlar") ?: java.io.File(filesDir, "kayitlar")).also { it.mkdirs() } }
+        private val rec by lazy { Recorder(recDir) }
+        private fun recOk(): Boolean { val u = web.url; return u != null && (u.startsWith(REMOTE_URL) || u.startsWith(TRUSTED_PREFIX)) }
+        @JavascriptInterface fun recSupported(): Boolean = true
+        /** Başladıysa dosya adı, değilse boş metin döner. */
+        @JavascriptInterface
+        fun recStart(): String {
+            if (!recOk()) return ""
+            val s = nv.recSource()
+            if (!(s[0].startsWith("http://") || s[0].startsWith("https://"))) return ""
+            return rec.start(s[0], s[1], s[2])
+        }
+        @JavascriptInterface fun recStop(): String = if (recOk()) rec.stop() else "{}"
+        @JavascriptInterface fun recStat(): String = if (recOk()) rec.stat() else "{}"
+        /** Kayıt dosyasının file:/// adresi (yoksa boş). */
+        @JavascriptInterface
+        fun recUrl(name: String): String = if (!recOk()) "" else (rec.fileOf(name)?.let { Uri.fromFile(it).toString() } ?: "")
+        @JavascriptInterface
+        fun recDelete(name: String): Boolean = if (!recOk()) false else (rec.fileOf(name)?.delete() ?: true)
+        /** Kaydı İndirilenler klasörüne kopyalar. */
+        @JavascriptInterface
+        fun recExport(name: String): Boolean {
+            if (!recOk()) return false
+            val src = rec.fileOf(name) ?: return false
+            return try {
+                if (Build.VERSION.SDK_INT >= 29) {
+                    val cv = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.Downloads.DISPLAY_NAME, name)
+                        put(android.provider.MediaStore.Downloads.MIME_TYPE, "video/mp2t")
+                        put(android.provider.MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                    }
+                    val uri = contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv) ?: return false
+                    contentResolver.openOutputStream(uri)?.use { o -> src.inputStream().use { it.copyTo(o) } }
+                } else {
+                    val d = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS); d.mkdirs()
+                    src.copyTo(java.io.File(d, name), true)
+                }
+                true
+            } catch (e: Exception) { false }
         }
         @JavascriptInterface fun play() = ui { nv.play() }
         @JavascriptInterface fun pause() = ui { nv.pause() }
