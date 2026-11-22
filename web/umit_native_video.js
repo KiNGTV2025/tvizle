@@ -183,7 +183,9 @@
       if (!styleEl) {
         styleEl = document.createElement('style'); styleEl.id = 'umit-nv-css';
         styleEl.textContent = 'html.umit-nv [data-umit-nvc],html.umit-nv #vid{background:transparent!important;background-color:transparent!important;background-image:none!important;transition:none!important}' +
-          'html.umit-nv #vid{opacity:1}';
+          'html.umit-nv #vid{opacity:1}' +
+          /* <html>/<body> kendisi de saydam olmalı: tam ekranda html.umk-watch{background:#000!important} gibi kurallar WebView'i opak boyayıp arkadaki videoyu kapatır */
+          'html.umit-nv:root,html.umit-nv:root body{background:transparent!important;background-color:transparent!important;background-image:none!important;transition:none!important}';
         (document.head || de).appendChild(styleEl);
       }
       try {
