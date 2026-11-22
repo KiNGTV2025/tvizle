@@ -92,6 +92,11 @@ class GridVideo(
                     send(i, JSONObject().put("t", "ready"))
                 }
             }
+            override fun onRenderedFirstFrame() {
+                // ilk kare çizildi: STATE_READY hiç bildirilmediyse de sayfaya "hazır" de (logo kalksın)
+                if (!c.everReady) { c.everReady = true; c.retries = 0 }
+                send(i, JSONObject().put("t", "ready"))
+            }
             override fun onVideoSizeChanged(vs: VideoSize) {
                 if (vs.height > 0) {
                     c.ratio = vs.width * vs.pixelWidthHeightRatio / vs.height
@@ -202,7 +207,11 @@ class GridVideo(
     // ───────────── İç işler ─────────────
     private fun refresh(c: Cell) {
         val lp = c.holder.layoutParams
-        c.holder.visibility = if (c.loaded && c.showWanted && lp.width > 0 && lp.height > 0) View.VISIBLE else View.INVISIBLE
+        // Sayfa kutuyu ancak 'ready' gelince göstermek ister (logo kalkınca show=true). Ama kutu INVISIBLE iken SurfaceView'in
+        // yüzeyi oluşmaz; yeni Media3 (1.9+) yüzey olmadan hazır olmadığı için 'ready' hiç gelmez ve kutu sonsuza dek
+        // "Açmaya çalışıyorum.." der. Bu yüzden ilk hazır oluşa kadar (yükleme sırasında) kutu görünür kalır; üstünü sayfadaki logo örter.
+        val visible = c.loaded && lp.width > 0 && lp.height > 0 && (c.showWanted || !c.everReady)
+        c.holder.visibility = if (visible) View.VISIBLE else View.INVISIBLE
     }
 
     private fun applyFit(c: Cell) {
