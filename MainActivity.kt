@@ -353,7 +353,10 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         askAudioOnce()
 
         web.webViewClient = remoteClient()
-        web.loadUrl(REMOTE_URL)
+        // [fix: "linkte giriş oluyor, APK'da eski giriş ekranı kalıyor"] WebView, GitHub Pages sayfasını HTTP önbelleğinden
+        // (eski sürüm) açabiliyordu. no-cache: her açılışta sunucuya sorar (ETag aynıysa 304, indirme yok); çevrimdışıysa
+        // aşağıdaki onReceivedError yedeği yine önbellekten açar.
+        web.loadUrl(REMOTE_URL, mapOf("Cache-Control" to "no-cache"))
         web.requestFocus()
     }
 
