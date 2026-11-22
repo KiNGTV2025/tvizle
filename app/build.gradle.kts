@@ -7,7 +7,7 @@ android {
     compileSdk = 36   // Media3 1.11.x ve güncel AndroidX bağımlılıkları için (targetSdk 30 aynen kalır)
     defaultConfig {
         applicationId = "com.umitm0d.tvizle"
-        minSdk = 21
+        minSdk = 23   // Media3 1.9+ minSdk 23 (Android 6.0) istiyor
         targetSdk = 30
         versionCode = (project.findProperty("vcode") as String?)?.toIntOrNull() ?: 6
         versionName = (project.findProperty("vname") as String?) ?: "1.5"
@@ -49,7 +49,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-common:2.6.2")
     implementation("androidx.core:core-ktx:1.13.1")
     // Kendi oynatıcımız (Televizo da ExoPlayer motorunu kullanıyor; bu açık kaynak sürümü)
-    // Media3 1.11.1 = en güncel KARARLI sürüm (1.12 henüz beta ve minSdk 24 istiyor; bizde minSdk 21)
+    // Media3 1.11.1 = en güncel KARARLI sürüm (1.12 henüz beta ve minSdk 24 istiyor; 1.9+ zaten minSdk 23 ister)
     val media3 = "1.11.1"
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-exoplayer-hls:$media3")
