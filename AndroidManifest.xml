@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- Sesli komut / mikrofon -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+    <!-- Telefon kumandası: QR kod tarama -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false"/>
+    <!-- Dosya ekleme (sadece cihazda sistem dosya seçici yoksa yedek gezgin için) -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+    <!-- Uygulama içi güncelleme: yeni sürümü indirip kurabilmek için -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    <!-- Android Auto (araç ekranı) -->
+    <uses-permission android:name="androidx.car.app.ACCESS_SURFACE"/>
+    <uses-permission android:name="androidx.car.app.NAVIGATION_TEMPLATES"/>
+    <uses-feature android:name="android.hardware.microphone" android:required="false"/>
+
+    <uses-feature android:name="android.software.leanback" android:required="false"/>
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
+
+    <!-- Android 11+: cihazdaki ses tanıma servisini görebilmek için -->
+    <queries>
+        <intent><action android:name="android.speech.RecognitionService"/></intent>
+    </queries>
+
+    <application
+        android:icon="@mipmap/ic_launcher"
+        android:banner="@drawable/banner"
+        android:label="ÜmitTV"
+        android:hardwareAccelerated="true"
+        android:requestLegacyExternalStorage="true"
+        android:usesCleartextTraffic="true"
+        android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+        <meta-data android:name="com.google.android.gms.car.application" android:resource="@xml/automotive_app_desc"/>
+        <meta-data android:name="androidx.car.app.minCarApiLevel" android:value="5"/>
+        <meta-data android:name="androidx.car.app.TintableAttributionIcon" android:resource="@drawable/car_attr"/>
+        <meta-data android:name="com.google.android.gms.car.notification.SmallIcon" android:resource="@drawable/car_attr"/>
+
+        <service
+            android:name=".UmitCarService"
+            android:exported="true"
+            android:label="ÜmitTV"
+            android:icon="@drawable/car_icon">
+            <intent-filter>
+                <action android:name="androidx.car.app.CarAppService"/>
+                <category android:name="androidx.car.app.category.NAVIGATION"/>
+            </intent-filter>
+        </service>
+
+        <!-- Araç ekranındaki sanal ekranda açılan ÜmitTV arayüzü -->
+        <activity
+            android:name=".CarMainActivity"
+            android:exported="false"
+            android:launchMode="standard"
+            android:taskAffinity="com.umitm0d.tvizle.car"
+            android:resizeableActivity="true"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density"/>
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:supportsPictureInPicture="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+        <!-- ÜmitTV'nin kendi oynatıcısı (Media3 / ExoPlayer) -->
+        <activity
+            android:name=".PlayerActivity"
+            android:exported="false"
+            android:screenOrientation="fullSensor"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density"/>
+
+        <!-- İndirilen APK dosyasını sistem kurucusuna "content://" olarak güvenle göstermek için -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/provider_paths"/>
+        </provider>
+    </application>
+</manifest>
