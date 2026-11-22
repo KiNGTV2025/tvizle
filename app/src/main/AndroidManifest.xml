@@ -33,10 +33,14 @@
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
         <meta-data android:name="com.google.android.gms.car.application" android:resource="@xml/automotive_app_desc"/>
         <meta-data android:name="androidx.car.app.minCarApiLevel" android:value="5"/>
+        <meta-data android:name="androidx.car.app.TintableAttributionIcon" android:resource="@drawable/car_attr"/>
+        <meta-data android:name="com.google.android.gms.car.notification.SmallIcon" android:resource="@drawable/car_attr"/>
 
         <service
             android:name=".UmitCarService"
-            android:exported="true">
+            android:exported="true"
+            android:label="ÜmitTV"
+            android:icon="@drawable/car_icon">
             <intent-filter>
                 <action android:name="androidx.car.app.CarAppService"/>
                 <category android:name="androidx.car.app.category.NAVIGATION"/>
