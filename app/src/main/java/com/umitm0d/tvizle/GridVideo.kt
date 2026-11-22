@@ -3,6 +3,7 @@ package com.umitm0d.tvizle
 import android.app.Activity
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.SurfaceView
 import android.view.View
@@ -51,6 +52,7 @@ class GridVideo(
         var muted = true
         var ratio = 0f
         var resumeOnStart = false
+        var gen = 0; var t0 = 0L; var lastErr = ""
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -145,6 +147,7 @@ class GridVideo(
         p.playWhenReady = true
         p.prepare()
         refresh(c)
+        startDiag(i, c)
     }
 
     fun mute(i: Int, muted: Boolean) {
@@ -232,6 +235,7 @@ class GridVideo(
 
     private fun handleError(i: Int, c: Cell, e: PlaybackException) {
         val p = c.player ?: return
+        c.lastErr = e.errorCodeName + (e.cause?.message?.let { ": " + it.take(70) } ?: "")
         if (e.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) { p.seekToDefaultPosition(); p.prepare(); return }
         if (c.everReady && c.retries < MAX_SILENT_RETRIES) {
             c.retries++
@@ -247,6 +251,44 @@ class GridVideo(
             return
         }
         send(i, JSONObject().put("t", "er").put("c", e.errorCode).put("m", e.errorCodeName))
+    }
+
+
+    // ───────────── Tanı: hücredeki "Açmaya çalışıyorum.." metnine canlı durum yazar; 20 sn hazır olmazsa hata bildirir ─────────────
+    private fun stateName(s: Int) = when (s) {
+        Player.STATE_IDLE -> "IDLE"; Player.STATE_BUFFERING -> "BUFFERING"
+        Player.STATE_READY -> "READY"; Player.STATE_ENDED -> "ENDED"; else -> "?"
+    }
+
+    private fun dbg(i: Int, s: String) {
+        val q = JSONObject.quote(s)
+        toJs("(function(){try{var l=document.querySelectorAll('.umit-grid-logo')[$i];" +
+            "if(!l||l.style.visibility==='hidden')return;var m=l.lastElementChild;" +
+            "if(m&&/^Açmaya/.test(m.textContent))m.textContent='Açmaya çalışıyorum.. ['+$q+']';}catch(e){}})()")
+    }
+
+    private fun startDiag(i: Int, c: Cell) {
+        val g = ++c.gen
+        c.t0 = SystemClock.elapsedRealtime()
+        c.lastErr = ""
+        val r = object : Runnable {
+            override fun run() {
+                if (c.gen != g || !c.loaded || c.everReady) return
+                val sec = (SystemClock.elapsedRealtime() - c.t0) / 1000
+                val st = c.player?.let { stateName(it.playbackState) } ?: "yok"
+                val sf = if (c.surface.holder.surface.isValid) "var" else "YOK"
+                dbg(i, st + " · yüzey " + sf + " · " + sec + "s" + (if (c.lastErr.isNotEmpty()) " · " + c.lastErr else ""))
+                if (sec >= 20) { send(i, JSONObject().put("t", "er").put("c", -1).put("m", "zaman aşımı: $st yüzey $sf ${c.lastErr}")); return }
+                handler.postDelayed(this, 1000)
+            }
+        }
+        handler.post(r)
+    }
+
+    /** MainActivity: http(s) olmayan adres geldiyse sayfaya hata bildir (sessizce yutulmasın). */
+    fun reject(i: Int, url: String) {
+        dbg(i, "adres http değil: " + url.take(40))
+        send(i, JSONObject().put("t", "er").put("c", -2).put("m", "bad url"))
     }
 
     private fun send(i: Int, j: JSONObject) {

@@ -399,7 +399,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         // ── Çoklu ekran (kutu başına ExoPlayer) ──
         @JavascriptInterface
         fun gLoad(i: Int, url: String, ua: String, referer: String, kind: String) = ui {
-            if (url.startsWith("http://") || url.startsWith("https://")) gv.load(i, url, ua, referer, kind)
+            if (url.startsWith("http://") || url.startsWith("https://")) gv.load(i, url, ua, referer, kind) else gv.reject(i, url)
         }
         @JavascriptInterface fun gStop(i: Int) = ui { gv.stop(i) }
         @JavascriptInterface fun gStopAll() = ui { gv.stopAll() }
