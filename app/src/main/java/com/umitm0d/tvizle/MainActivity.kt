@@ -1148,6 +1148,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             addUpdateListener {
                 val l = web.layoutParams as? FrameLayout.LayoutParams ?: return@addUpdateListener
                 l.topMargin = it.animatedValue as Int; web.layoutParams = l
+                runCatching { nv.reapply(); gv.reapply() }   // video katmanı WebView ile birlikte kaysın
             }
             start()
         }

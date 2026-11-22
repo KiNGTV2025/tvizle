@@ -54,6 +54,7 @@ class GridVideo(
         var resumeOnStart = false
         var gen = 0; var t0 = 0L; var lastErr = ""
         var src = ""; var rgen = 0; var vavooRetried = false
+        var lastRect: DoubleArray? = null
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -208,11 +209,27 @@ class GridVideo(
         }
     }
 
+    private fun webOffX(): Int = (web.layoutParams as? ViewGroup.MarginLayoutParams)?.leftMargin ?: 0
+    private fun webOffY(): Int = (web.layoutParams as? ViewGroup.MarginLayoutParams)?.topMargin ?: 0
+    /** WebView güncelleme şeridi yüzünden aşağı itilince ızgara hücrelerini aynı kadar kaydırır. */
+    fun reapply() {
+        for (c in cells) {
+            if (c == null) continue
+            val r = c.lastRect ?: continue
+            val sx = if (r[4] > 0 && web.width > 0) web.width / r[4] else 1.0
+            val sy = if (r[5] > 0 && web.height > 0) web.height / r[5] else 1.0
+            val lp = c.holder.layoutParams as? FrameLayout.LayoutParams ?: continue
+            val nx = (r[0] * sx).toInt() + webOffX(); val ny = (r[1] * sy).toInt() + webOffY()
+            if (lp.leftMargin != nx || lp.topMargin != ny) { lp.leftMargin = nx; lp.topMargin = ny; c.holder.layoutParams = lp }
+        }
+    }
+
     fun rect(i: Int, x: Double, y: Double, w: Double, h: Double, iw: Double, ih: Double, show: Boolean) {
         val c = cell(i) ?: return
+        c.lastRect = doubleArrayOf(x, y, w, h, iw, ih)
         val sx = if (iw > 0 && web.width > 0) web.width / iw else 1.0
         val sy = if (ih > 0 && web.height > 0) web.height / ih else 1.0
-        val nx = (x * sx).toInt(); val ny = (y * sy).toInt()
+        val nx = (x * sx).toInt() + webOffX(); val ny = (y * sy).toInt() + webOffY()
         val nw = (w * sx).toInt().coerceAtLeast(0); val nh = (h * sy).toInt().coerceAtLeast(0)
         val lp = c.holder.layoutParams as FrameLayout.LayoutParams
         if (lp.leftMargin != nx || lp.topMargin != ny || lp.width != nw || lp.height != nh) {

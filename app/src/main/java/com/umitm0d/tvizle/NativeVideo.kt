@@ -451,12 +451,27 @@ class NativeVideo(
 
     /** Sayfanın #vid dikdörtgeni (CSS px) → cihaz pikseli. iw/ih: sayfanın window.innerWidth/innerHeight'i. */
     private var rectPend: Runnable? = null
+    private var lastRect: DoubleArray? = null
+    /** WebView güncelleme şeridi vb. yüzünden aşağı itildiyse (üst/sol kenar boşluğu) video katmanı da aynı kadar kayar. */
+    private fun webOffX(): Int = (web.layoutParams as? ViewGroup.MarginLayoutParams)?.leftMargin ?: 0
+    private fun webOffY(): Int = (web.layoutParams as? ViewGroup.MarginLayoutParams)?.topMargin ?: 0
+    /** WebView'in konumu değişince (şerit inip çıkarken) son bilinen dikdörtgeni anında yeni konuma taşır. */
+    fun reapply() {
+        val r = lastRect ?: return
+        val iw = r[4]; val ih = r[5]
+        val sx = if (iw > 0 && web.width > 0) web.width / iw else 1.0
+        val sy = if (ih > 0 && web.height > 0) web.height / ih else 1.0
+        val lp = holder.layoutParams as? FrameLayout.LayoutParams ?: return
+        val nx = (r[0] * sx).toInt() + webOffX(); val ny = (r[1] * sy).toInt() + webOffY()
+        if (lp.leftMargin != nx || lp.topMargin != ny) { lp.leftMargin = nx; lp.topMargin = ny; holder.layoutParams = lp }
+    }
     fun rect(x: Double, y: Double, w: Double, h: Double, iw: Double, ih: Double, show: Boolean, fit: String) {
         fitMode = fit
         showWanted = show
+        lastRect = doubleArrayOf(x, y, w, h, iw, ih)
         val sx = if (iw > 0 && web.width > 0) web.width / iw else 1.0
         val sy = if (ih > 0 && web.height > 0) web.height / ih else 1.0
-        val nx = (x * sx).toInt(); val ny = (y * sy).toInt()
+        val nx = (x * sx).toInt() + webOffX(); val ny = (y * sy).toInt() + webOffY()
         val nw = (w * sx).toInt().coerceAtLeast(0); val nh = (h * sy).toInt().coerceAtLeast(0)
         val apply = Runnable {
             rectPend = null
