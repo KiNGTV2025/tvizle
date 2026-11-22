@@ -149,7 +149,7 @@ class NativeVideo(
         val p = ExoPlayer.Builder(act, renderers)
             .setLoadControl(loadControl)
             .setAudioAttributes(AudioAttributes.Builder()
-                .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
+                .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), false) // false: audio focus'u yönetme; WebView ses/önizleme odak alınca ExoPlayer sesi %20'ye düşüp geri gelmiyordu
             .setHandleAudioBecomingNoisy(true)
             .build()
         p.addListener(object : Player.Listener {
