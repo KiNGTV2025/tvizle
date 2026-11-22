@@ -890,7 +890,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         else @Suppress("DEPRECATION") packageManager.getPackageInfo(packageName, 0).versionCode
 
     /** Deneme: güncelleme kontrolünün sonucunu ekranda gösterir (sorun giderme). Sorun çözülünce false yapılır. */
-    private val UPDATE_DEBUG = true
+    private val UPDATE_DEBUG = false
     private var lastHttp = 0
     private fun updDbg(msg: String) {
         if (!UPDATE_DEBUG) return
