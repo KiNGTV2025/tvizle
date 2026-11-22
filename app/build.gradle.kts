@@ -4,7 +4,7 @@ plugins {
 }
 android {
     namespace = "com.umitm0d.tvizle"
-    compileSdk = 34
+    compileSdk = 36   // Media3 1.11.x ve güncel AndroidX bağımlılıkları için (targetSdk 30 aynen kalır)
     defaultConfig {
         applicationId = "com.umitm0d.tvizle"
         minSdk = 21
@@ -38,7 +38,10 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
+}
+// Kotlin 2.2'de eski kotlinOptions DSL'i hata veriyor; yenisi:
+kotlin {
+    compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
 }
 dependencies {
     // Android Auto (Car App Library)
@@ -46,11 +49,13 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-common:2.6.2")
     implementation("androidx.core:core-ktx:1.13.1")
     // Kendi oynatıcımız (Televizo da ExoPlayer motorunu kullanıyor; bu açık kaynak sürümü)
-    implementation("androidx.media3:media3-exoplayer:1.3.1")
-    implementation("androidx.media3:media3-exoplayer-hls:1.3.1")
-    implementation("androidx.media3:media3-exoplayer-dash:1.3.1")
-    implementation("androidx.media3:media3-exoplayer-smoothstreaming:1.3.1")
-    implementation("androidx.media3:media3-exoplayer-rtsp:1.3.1")
-    implementation("androidx.media3:media3-ui:1.3.1")
-    implementation("androidx.media3:media3-datasource-rtmp:1.3.1")
+    // Media3 1.11.1 = en güncel KARARLI sürüm (1.12 henüz beta ve minSdk 24 istiyor; bizde minSdk 21)
+    val media3 = "1.11.1"
+    implementation("androidx.media3:media3-exoplayer:$media3")
+    implementation("androidx.media3:media3-exoplayer-hls:$media3")
+    implementation("androidx.media3:media3-exoplayer-dash:$media3")
+    implementation("androidx.media3:media3-exoplayer-smoothstreaming:$media3")
+    implementation("androidx.media3:media3-exoplayer-rtsp:$media3")
+    implementation("androidx.media3:media3-ui:$media3")
+    implementation("androidx.media3:media3-datasource-rtmp:$media3")
 }
