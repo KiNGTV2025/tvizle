@@ -1022,6 +1022,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     private var updDetailTv: android.widget.TextView? = null
     private var updProgView: UpdProgressView? = null
     private var updProgBox: View? = null
+    private var updInfoBtn: View? = null
     private var updFocusables: List<View> = emptyList()
     private var updBusy = false
     private var updHidden = false                             // indirme sürerken modal gizlendi
@@ -1079,7 +1080,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     private fun removeUpdModalViews() {
         val ov = updBanner
         updBanner = null; updCard = null; updBtn = null; updSecBtn = null
-        updStatusTv = null; updPctTv = null; updDetailTv = null; updProgView = null; updProgBox = null
+        updStatusTv = null; updPctTv = null; updDetailTv = null; updProgView = null; updProgBox = null; updInfoBtn = null
         updFocusables = emptyList()
         animateWebTop(0)
         if (ov == null) return
@@ -1119,96 +1120,84 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         val ORANGE = Color.parseColor("#F97316"); val AMBER = Color.parseColor("#FBBF24")
         val sbH = resources.getIdentifier("status_bar_height", "dimen", "android").let { if (it > 0) resources.getDimensionPixelSize(it) else 0 }
 
-        val card = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            setPadding(dp(12), dp(8), dp(12), dp(8))
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(Color.parseColor("#FF2A231B"), Color.parseColor("#FF15120E"))).apply {
-                cornerRadius = dp(22).toFloat(); setStroke(dp(1), Color.parseColor("#55F97316"))
-            }
-            elevation = dp(16).toFloat()
-            layoutTransition = android.animation.LayoutTransition().apply { enableTransitionType(android.animation.LayoutTransition.CHANGING) }
-        }
+        val BAR = Color.parseColor("#FF25232B"); val GRAY = Color.parseColor("#FFA19FA9")
+        val WHITE_BTN = Color.parseColor("#FFF4F2F8")
+        val title = verLabel + if (sizeBytes > 0) "  •  " + Math.max(1L, Math.round(sizeBytes / 1048576.0)).toString() + " MB" else ""
 
-        // ── üst satır: simge • metin • düğmeler ──
-        val row = android.widget.LinearLayout(this).apply { orientation = android.widget.LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        val icon = android.widget.ImageView(this).apply {
-            setImageResource(R.mipmap.ic_launcher)
-            scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
-            clipToOutline = true
-            outlineProvider = object : android.view.ViewOutlineProvider() {
-                override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(12).toFloat()) }
-            }
+        // Düz, koyu üst şerit: arkada soldan sağa dolan ilerleme, önde simge • metin • düğmeler
+        val card = FrameLayout(this).apply { setBackgroundColor(BAR); elevation = dp(16).toFloat() }
+        val prog = UpdProgressView(this)
+        card.addView(prog, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+
+        val row = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), sbH + dp(10), dp(12), dp(10))
         }
-        row.addView(icon, android.widget.LinearLayout.LayoutParams(dp(38), dp(38)))
+        row.addView(UpdCloudIcon(this), android.widget.LinearLayout.LayoutParams(dp(30), dp(30)))
         val texts = android.widget.LinearLayout(this).apply { orientation = android.widget.LinearLayout.VERTICAL }
         texts.addView(android.widget.TextView(this).apply {
-            text = "Yeni sürüm hazır"; setTextColor(Color.WHITE); textSize = 16f
+            text = title; setTextColor(Color.WHITE); textSize = 16.5f
             setTypeface(typeface, android.graphics.Typeface.BOLD); maxLines = 1
         })
-        texts.addView(android.widget.TextView(this).apply {
-            text = sub; setTextColor(Color.parseColor("#FDBA74")); textSize = 13f; maxLines = 1
-        })
-        row.addView(texts, android.widget.LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(12); rightMargin = dp(8) })
+        val subTv = android.widget.TextView(this).apply { text = "Güncelleme var"; setTextColor(GRAY); textSize = 13f; maxLines = 1 }
+        texts.addView(subTv)
+        row.addView(texts, android.widget.LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(14); rightMargin = dp(8) })
 
-        fun gradBg(c1: Int, c2: Int, stroke: Boolean) = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(c1, c2)).apply {
-            cornerRadius = dp(14).toFloat(); if (stroke) setStroke(dp(2), Color.WHITE)
+        fun roundBg(color: Int, r: Int, focused: Boolean) = GradientDrawable().apply {
+            setColor(color); cornerRadius = dp(r).toFloat(); if (focused) setStroke(dp(3), ORANGE)
         }
-        fun styleBtn(v: View, c1: Int, c2: Int) {
-            v.background = gradBg(c1, c2, false)
+        fun styleBtn(v: View, color: Int, r: Int) {
+            v.background = roundBg(color, r, false)
             v.setOnFocusChangeListener { _, f ->
-                v.background = gradBg(c1, c2, f)
-                v.animate().scaleX(if (f) 1.06f else 1f).scaleY(if (f) 1.06f else 1f).setDuration(120).start()
+                v.background = roundBg(color, r, f)
+                v.animate().scaleX(if (f) 1.08f else 1f).scaleY(if (f) 1.08f else 1f).setDuration(120).start()
             }
         }
-        val secBtn = android.widget.TextView(this).apply {
-            text = "Sonra"; setTextColor(Color.WHITE); textSize = 14f; gravity = Gravity.CENTER
-            setTypeface(typeface, android.graphics.Typeface.BOLD); isFocusable = true; isClickable = true
-            setPadding(dp(14), 0, dp(14), 0)
-            setOnClickListener { if (!updBusy) snoozeUpdate() }
+        val infoBtn = android.widget.TextView(this).apply {
+            text = "i"; setTextColor(BAR); textSize = 17f; gravity = Gravity.CENTER
+            setTypeface(android.graphics.Typeface.SERIF, android.graphics.Typeface.BOLD)
+            isFocusable = true; isClickable = true
+            setOnClickListener {
+                val msg = notes.trim().ifBlank { title }
+                runCatching { android.app.AlertDialog.Builder(this@MainActivity).setTitle("ÜmitTV " + ver).setMessage(msg).setPositiveButton("Tamam", null).show() }
+            }
         }
-        styleBtn(secBtn, Color.parseColor("#26FFFFFF"), Color.parseColor("#26FFFFFF"))
+        styleBtn(infoBtn, WHITE_BTN, 17)
+        row.addView(infoBtn, android.widget.LinearLayout.LayoutParams(dp(34), dp(34)))
         val priBtn = android.widget.TextView(this).apply {
-            text = "Güncelle"; setTextColor(Color.parseColor("#1A0F05")); textSize = 14.5f; gravity = Gravity.CENTER
+            text = "Güncelle"; setTextColor(Color.parseColor("#FF111014")); textSize = 15f; gravity = Gravity.CENTER
             setTypeface(typeface, android.graphics.Typeface.BOLD); isFocusable = true; isClickable = true
-            setPadding(dp(18), 0, dp(18), 0)
+            setPadding(dp(20), 0, dp(20), 0)
             setOnClickListener { onUpdPrimaryClick() }
         }
-        styleBtn(priBtn, ORANGE, AMBER)
-        row.addView(secBtn, android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)))
-        row.addView(priBtn, android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)).apply { leftMargin = dp(8) })
-        card.addView(row, android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        styleBtn(priBtn, WHITE_BTN, 22)
+        row.addView(priBtn, android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { leftMargin = dp(12) })
+        val xBtn = android.widget.TextView(this).apply {
+            text = "✕"; setTextColor(Color.WHITE); textSize = 20f; gravity = Gravity.CENTER
+            isFocusable = true; isClickable = true
+            setOnClickListener { if (!updBusy) snoozeUpdate() }
+        }
+        styleBtn(xBtn, Color.TRANSPARENT, 22)
+        row.addView(xBtn, android.widget.LinearLayout.LayoutParams(dp(44), dp(44)).apply { leftMargin = dp(4) })
+        card.addView(row, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        card.isFocusable = true
 
-        // ── ilerleme bölümü (indirme başlayınca açılır) ──
-        val progBox = android.widget.LinearLayout(this).apply { orientation = android.widget.LinearLayout.VERTICAL; visibility = View.GONE }
-        val rowTop = android.widget.LinearLayout(this).apply { orientation = android.widget.LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        val statusTv = android.widget.TextView(this).apply { setTextColor(Color.WHITE); textSize = 13.5f; setTypeface(typeface, android.graphics.Typeface.BOLD) }
-        val pctTv = android.widget.TextView(this).apply { setTextColor(Color.parseColor("#FDBA74")); textSize = 13.5f; setTypeface(typeface, android.graphics.Typeface.BOLD) }
-        rowTop.addView(statusTv, android.widget.LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        rowTop.addView(pctTv)
-        val prog = UpdProgressView(this)
-        val detailTv = android.widget.TextView(this).apply { setTextColor(Color.parseColor("#8F93A0")); textSize = 12f }
-        progBox.addView(rowTop)
-        progBox.addView(prog, android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(8)).apply { topMargin = dp(8) })
-        progBox.addView(detailTv, android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
-        card.addView(progBox, android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
-
-        updBanner = card; updCard = card; updBtn = priBtn; updSecBtn = secBtn
-        updStatusTv = statusTv; updPctTv = pctTv; updDetailTv = detailTv; updProgView = prog; updProgBox = progBox
+        updBanner = card; updCard = card; updBtn = priBtn; updSecBtn = xBtn; updInfoBtn = infoBtn
+        updStatusTv = subTv; updPctTv = android.widget.TextView(this); updDetailTv = android.widget.TextView(this)
+        updProgView = prog; updProgBox = card
 
         // sayfayı kartın altına it: kart hiçbir butonun üstüne binmesin
         card.addOnLayoutChangeListener { _, _, _, _, b, _, _, _, _ ->
             if (updBanner === card) animateWebTop(b)
         }
         val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP)
-            .apply { setMargins(dp(8), sbH + dp(2), dp(8), dp(2)) }
         root.addView(card, lp)
         card.bringToFront()
 
         // yukarıdan aşağı iniş animasyonu
-        card.alpha = 0f; card.translationY = -dp(200).toFloat()
-        card.animate().alpha(1f).translationY(0f).setDuration(520)
-            .setInterpolator(android.view.animation.OvershootInterpolator(0.8f)).start()
+        card.alpha = 0f; card.translationY = -dp(160).toFloat()
+        card.animate().alpha(1f).translationY(0f).setDuration(380)
+            .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
 
         setUpdState(updState)
         if (updState == UPD_DL && pendingDownloadId != -1L) startUpdPoll()
@@ -1240,50 +1229,31 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     private fun setUpdState(st: Int, msg: String = "") {
         updState = st
         updBusy = st == UPD_PREP || st == UPD_PERM || st == UPD_DL || st == UPD_INSTALLING
-        val box = updProgBox ?: return
         val pri = updBtn ?: return
-        val sec = updSecBtn ?: return
-        val status = updStatusTv; val pct = updPctTv; val detail = updDetailTv; val pv = updProgView
-        status?.setTextColor(Color.WHITE)
-        pri.alpha = if (updBusy) 0.78f else 1f
+        val x = updSecBtn ?: return
+        val sub = updStatusTv; val pv = updProgView
+        val GRAY = Color.parseColor("#FFA19FA9")
+        sub?.setTextColor(if (updBusy) Color.WHITE else GRAY)
+        fun buttons(showPri: Boolean, showX: Boolean) {
+            pri.visibility = if (showPri) View.VISIBLE else View.GONE
+            x.visibility = if (showX) View.VISIBLE else View.GONE
+        }
         when (st) {
-            UPD_IDLE -> {
-                box.visibility = View.GONE; sec.visibility = View.VISIBLE; pri.text = "Güncelle"
-            }
-            UPD_PREP -> {
-                box.visibility = View.VISIBLE; sec.visibility = View.GONE; pri.text = "Hazırlanıyor…"
-                status?.text = "Hazırlanıyor…"; pct?.text = ""; detail?.text = "Sunucuya bağlanılıyor"
-                pv?.indeterminate = true
-            }
-            UPD_PERM -> {
-                box.visibility = View.VISIBLE; sec.visibility = View.GONE; pri.text = "İzin bekleniyor…"
-                status?.text = "İzin bekleniyor…"; pct?.text = ""; detail?.text = "Açılan ekranda ÜmitTV için izni aç, sonra geri dön"
-                pv?.indeterminate = true
-            }
-            UPD_DL -> {
-                box.visibility = View.VISIBLE; sec.visibility = View.GONE; pri.text = "İndiriliyor…"
-                status?.text = "İndiriliyor…"
-                if (pv != null && pv.target <= 0f) pv.indeterminate = true
-            }
-            UPD_INSTALLING -> {
-                box.visibility = View.VISIBLE; sec.visibility = View.GONE; pri.text = "Kuruluma geçiliyor…"
-                status?.text = "İndirme tamamlandı"; pct?.text = "100%"; detail?.text = "Kurulum ekranı açılıyor…"
-                pv?.indeterminate = false; pv?.setTarget(1f)
-            }
-            UPD_READY -> {
-                box.visibility = View.VISIBLE; sec.visibility = View.VISIBLE; pri.text = "Şimdi yükle"
-                status?.text = "Kuruluma hazır"; pct?.text = "100%"; detail?.text = "Kurulumu iptal ettiysen “Şimdi yükle”ye bas"
-                pv?.indeterminate = false; pv?.setTarget(1f)
-            }
+            UPD_IDLE -> { buttons(true, true); pri.text = "Güncelle"; sub?.text = "Güncelleme var"; pv?.indeterminate = false; pv?.setTarget(0f) }
+            UPD_PREP -> { buttons(false, false); sub?.text = "Hazırlanıyor…"; pv?.indeterminate = true }
+            UPD_PERM -> { buttons(false, false); sub?.text = "İzin bekleniyor… (açılan ekranda izni aç, sonra geri dön)"; pv?.indeterminate = true }
+            UPD_DL -> { buttons(false, false); sub?.text = "İndiriliyor…"; if (pv != null && pv.target <= 0f) pv.indeterminate = true }
+            UPD_INSTALLING -> { buttons(false, false); sub?.text = "Kuruluma geçiliyor…"; pv?.indeterminate = false; pv?.setTarget(0f) }
+            UPD_READY -> { buttons(true, true); pri.text = "Kur"; sub?.text = "Yeni sürüm kurulmaya hazır."; pv?.indeterminate = false; pv?.setTarget(0f) }
             UPD_ERR -> {
-                box.visibility = View.VISIBLE; sec.visibility = View.VISIBLE; pri.text = "Tekrar dene"
-                status?.text = msg.ifBlank { "Bir sorun oluştu" }; status?.setTextColor(Color.parseColor("#F87171"))
-                pct?.text = ""; detail?.text = "Bağlantını kontrol edip tekrar dene"
+                buttons(true, true); pri.text = "Tekrar dene"
+                sub?.text = msg.ifBlank { "Bir sorun oluştu" }; sub?.setTextColor(Color.parseColor("#FFF87171"))
                 pv?.indeterminate = false; pv?.setTarget(0f)
             }
         }
-        updFocusables = if (sec.visibility == View.VISIBLE) listOf(sec, pri) else listOf(pri)
-        pri.requestFocus()      // odak web sayfasına kaçmasın
+        val info = updInfoBtn
+        updFocusables = listOfNotNull(info, pri.takeIf { it.visibility == View.VISIBLE }, x.takeIf { it.visibility == View.VISIBLE })
+        if (pri.visibility == View.VISIBLE) pri.requestFocus() else (updCard ?: info)?.requestFocus()   // odak web sayfasına kaçmasın
     }
 
     // ── İndirme ilerlemesi (DownloadManager'ı 250 ms'de bir okur) ──
@@ -1338,7 +1308,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             if (total > 0L) {
                 val p = (got.toFloat() / total).coerceIn(0f, 1f)
                 pv?.indeterminate = false; pv?.setTarget(p)
-                updPctTv?.text = (p * 100).toInt().toString() + "%"
+                updStatusTv?.text = "İndiriliyor " + (p * 100).toInt() + "%"
                 val sb = StringBuilder(fmtMb(got)).append(" / ").append(fmtMb(total)).append(" MB")
                 if (updSpeed > 20_000f) {
                     sb.append("  •  ").append(fmtSpeed(updSpeed))
@@ -1599,13 +1569,10 @@ private const val UPD_INSTALLING = 4
 private const val UPD_READY = 5
 private const val UPD_ERR = 6
 
-/** Turuncu→amber degrade dolgulu, parlama efektli, akıcı animasyonlu ilerleme çubuğu (belirsiz modu da var). */
+/** Şeridin arkasında soldan sağa dolan düz ilerleme alanı (belirsiz modda kayan bant). */
 private class UpdProgressView(ctx: Context) : View(ctx) {
-    private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#26FFFFFF") }
-    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val shine = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val rect = RectF()
-    private val clip = Path()
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#FF4A4950") }
+    private val band = Paint(Paint.ANTI_ALIAS_FLAG)
     private var shown = 0f
     var target = 0f
         private set
@@ -1614,11 +1581,11 @@ private class UpdProgressView(ctx: Context) : View(ctx) {
         set(v) { field = v; invalidate() }
 
     private val anim = ValueAnimator.ofFloat(0f, 1f).apply {
-        duration = 1300; repeatCount = ValueAnimator.INFINITE
+        duration = 1400; repeatCount = ValueAnimator.INFINITE
         interpolator = android.view.animation.LinearInterpolator()
         addUpdateListener {
             phase = it.animatedValue as Float
-            shown += (target - shown) * 0.16f          // hedefe yumuşak yaklaş
+            shown += (target - shown) * 0.18f
             invalidate()
         }
     }
@@ -1631,29 +1598,37 @@ private class UpdProgressView(ctx: Context) : View(ctx) {
     override fun onDraw(c: Canvas) {
         val w = width.toFloat(); val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
-        val r = h / 2f
-        rect.set(0f, 0f, w, h)
-        c.drawRoundRect(rect, r, r, track)
-        val orange = Color.parseColor("#F97316"); val amber = Color.parseColor("#FBBF24")
         if (indeterminate) {
-            val seg = w * 0.38f
+            val seg = w * 0.35f
             val x = -seg + (w + seg) * phase
-            clip.reset(); clip.addRoundRect(rect, r, r, Path.Direction.CW)
-            c.save(); c.clipPath(clip)
-            fill.shader = LinearGradient(x, 0f, x + seg, 0f,
-                intArrayOf(Color.TRANSPARENT, orange, amber, Color.TRANSPARENT), floatArrayOf(0f, 0.3f, 0.7f, 1f), Shader.TileMode.CLAMP)
-            c.drawRect(x, 0f, x + seg, h, fill)
-            c.restore()
+            band.shader = LinearGradient(x, 0f, x + seg, 0f,
+                intArrayOf(Color.TRANSPARENT, Color.parseColor("#FF3A3940"), Color.TRANSPARENT), null, Shader.TileMode.CLAMP)
+            c.drawRect(x, 0f, x + seg, h, band)
         } else if (shown > 0.002f) {
-            val fw = Math.max(h, w * shown)
-            rect.set(0f, 0f, fw, h)
-            fill.shader = LinearGradient(0f, 0f, fw, 0f, orange, amber, Shader.TileMode.CLAMP)
-            c.drawRoundRect(rect, r, r, fill)
-            val sw = Math.max(h * 4f, fw * 0.3f)
-            val sx = -sw + (fw + sw) * phase
-            shine.shader = LinearGradient(sx, 0f, sx + sw, 0f,
-                intArrayOf(0x00FFFFFF, 0x55FFFFFF, 0x00FFFFFF), null, Shader.TileMode.CLAMP)
-            c.drawRoundRect(rect, r, r, shine)
+            c.drawRect(0f, 0f, w * shown, h, fill)
         }
+    }
+}
+
+/** Beyaz "bulut + aşağı ok" simgesi (Material cloud_download). */
+private class UpdCloudIcon(ctx: Context) : View(ctx) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    private val path = Path().apply {
+        fillType = Path.FillType.EVEN_ODD
+        moveTo(19.35f, 10.04f)
+        cubicTo(18.67f, 6.59f, 15.64f, 4f, 12f, 4f)
+        cubicTo(9.11f, 4f, 6.6f, 5.64f, 5.35f, 8.04f)
+        cubicTo(2.34f, 8.36f, 0f, 10.91f, 0f, 14f)
+        cubicTo(0f, 17.31f, 2.69f, 20f, 6f, 20f)
+        lineTo(19f, 20f)
+        cubicTo(21.76f, 20f, 24f, 17.76f, 24f, 15f)
+        cubicTo(24f, 12.36f, 21.95f, 10.22f, 19.35f, 10.04f)
+        close()
+        moveTo(17f, 13f); lineTo(12f, 18f); lineTo(7f, 13f); lineTo(10f, 13f); lineTo(10f, 9f)
+        lineTo(14f, 9f); lineTo(14f, 13f); lineTo(17f, 13f); close()
+    }
+    override fun onDraw(c: Canvas) {
+        val sc = Math.min(width, height) / 24f
+        c.save(); c.scale(sc, sc); c.drawPath(path, p); c.restore()
     }
 }
