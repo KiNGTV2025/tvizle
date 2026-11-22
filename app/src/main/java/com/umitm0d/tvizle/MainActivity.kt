@@ -889,6 +889,14 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         if (Build.VERSION.SDK_INT >= 28) packageManager.getPackageInfo(packageName, 0).longVersionCode.toInt()
         else @Suppress("DEPRECATION") packageManager.getPackageInfo(packageName, 0).versionCode
 
+    /** Deneme: güncelleme kontrolünün sonucunu ekranda gösterir (sorun giderme). Sorun çözülünce false yapılır. */
+    private val UPDATE_DEBUG = true
+    private var lastHttp = 0
+    private fun updDbg(msg: String) {
+        if (!UPDATE_DEBUG) return
+        runOnUiThread { Toast.makeText(this, "GÜNCELLEME: $msg", Toast.LENGTH_LONG).show() }
+    }
+
     /** En az UPDATE_CHECK_MIN_GAP_MS'de bir, arka plan iş parçacığında manifestoyu kontrol eder. */
     private fun httpGet(u: String): String? {
         val conn = (URL(u).openConnection() as HttpURLConnection).apply {
@@ -897,7 +905,8 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             if (REL_TOKEN.isNotBlank() && u.startsWith("https://api.github.com/")) setRequestProperty("Authorization", "Bearer $REL_TOKEN")
         }
         return try {
-            if (conn.responseCode !in 200..299) null
+            val rc = conn.responseCode; lastHttp = rc
+            if (rc !in 200..299) null
             else conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
         } finally { conn.disconnect() }
     }
@@ -925,7 +934,8 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                         val a = assets.getJSONObject(k)
                         if (a.optString("name").endsWith(".apk", true)) { url = a.optString("url"); sizeB = a.optLong("size"); break }
                     }
-                }
+                }.onFailure { updDbg("GitHub okunamadı: HTTP $lastHttp (${it.javaClass.simpleName})") }
+                val ghHttp = lastHttp
                 // 2) yedek: eski update.json
                 if (remoteCode <= 0 || url.isBlank()) {
                     val j = JSONObject(httpGet(UPDATE_MANIFEST_URL) ?: return@Thread)
@@ -933,6 +943,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                     url = j.optString("url", "")
                     vName = j.optString("versionName", ""); notes = j.optString("notes", "")
                 }
+                updDbg("GitHub HTTP $ghHttp, uzak=$remoteCode, yerel=${currentVersionCode()}, apk=${if (url.isBlank()) "yok" else "var"}, token=${if (REL_TOKEN.isBlank()) "YOK" else "var"}")
                 if (remoteCode <= currentVersionCode() || url.isBlank()) return@Thread
                 if (sp.getInt("upd_dismissed", 0) >= remoteCode) return@Thread
                 val code = remoteCode; val u = url; val n = vName; val sz = sizeB; val nt = notes
