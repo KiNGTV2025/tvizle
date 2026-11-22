@@ -13,6 +13,17 @@ import android.content.pm.PackageManager
 import android.app.DownloadManager
 import android.database.Cursor
 import android.graphics.Color
+import android.media.AudioTrack
+import android.media.AudioFormat
+import android.media.AudioAttributes
+import android.graphics.drawable.GradientDrawable
+import android.graphics.Shader
+import android.graphics.RectF
+import android.graphics.Path
+import android.graphics.Paint
+import android.graphics.LinearGradient
+import android.graphics.Canvas
+import android.animation.ValueAnimator
 import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
@@ -725,11 +736,14 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {
         if (SHOW_KEYCODES && e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0)
             toast("Tuş kodu: ${e.keyCode} (${KeyEvent.keyCodeToString(e.keyCode)})")
-        // Güncelleme şeridi odaktayken kumanda şeridi yönetir (sol/sağ: düğmeler, geri: kapat)
+        // Güncelleme modalı açıkken kumanda onu yönetir (sol/sağ: düğmeler, geri: sonra / indirmeyi arkaya al)
         val ub = updBanner
+        if (ub != null && e.keyCode == KeyEvent.KEYCODE_BACK) {
+            if (e.action == KeyEvent.ACTION_UP) onUpdBack()
+            return true
+        }
         if (ub != null && ub.hasFocus()) {
             when (e.keyCode) {
-                KeyEvent.KEYCODE_BACK -> { if (e.action == KeyEvent.ACTION_UP) closeUpdateBanner(true); return true }
                 KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> return true
                 KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
                     if (e.action == KeyEvent.ACTION_DOWN) {
@@ -872,6 +886,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         mediaSession?.release(); mediaSession = null
         fileCb?.onReceiveValue(null); fileCb = null
         if (dlReceiverOn) { runCatching { unregisterReceiver(dlCompleteReceiver) }; dlReceiverOn = false }
+        stopUpdPoll()
         nv.release(); gv.release()
         root.removeAllViews(); web.destroy(); super.onDestroy()
     }
@@ -917,7 +932,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         val sp = getSharedPreferences("umittv", MODE_PRIVATE)
         val last = sp.getLong("upd_last_check", 0L)
         val now = System.currentTimeMillis()
-        if (now - last < UPDATE_CHECK_MIN_GAP_MS || pendingDownloadId != -1L) return
+        if (now - last < UPDATE_CHECK_MIN_GAP_MS || pendingDownloadId != -1L || updArgs != null) return
         sp.edit().putLong("upd_last_check", now).apply()
         Thread {
             try {
@@ -947,6 +962,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 updDbg("GitHub HTTP $ghHttp, uzak=$remoteCode, yerel=${currentVersionCode()}, apk=${if (url.isBlank()) "yok" else "var"}, token=${if (REL_TOKEN.isBlank()) "YOK" else "var"}")
                 if (remoteCode <= currentVersionCode() || url.isBlank()) return@Thread
                 if (sp.getInt("upd_dismissed", 0) >= remoteCode) return@Thread
+                if (System.currentTimeMillis() < sp.getLong("upd_snooze_until", 0L)) return@Thread
                 val code = remoteCode; val u = url; val n = vName; val sz = sizeB; val nt = notes
                 runOnUiThread { if (!isFinishing) showUpdateBanner(u, n, sz, nt, code) }
             } catch (e: Exception) {
@@ -955,115 +971,419 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         }.start()
     }
 
-    private var updBanner: android.view.View? = null
-    private var updBtn: android.widget.TextView? = null
+    // ── Güncelleme modalı: durumlar ──────────────────────────────
+    private var updBanner: View? = null                       // tam ekran modal (karartma + kart)
+    private var updCard: View? = null
+    private var updBtn: android.widget.TextView? = null       // ana düğme (Güncelle / Yükle / Tekrar dene)
+    private var updSecBtn: android.widget.TextView? = null    // "Sonra"
+    private var updStatusTv: android.widget.TextView? = null
+    private var updPctTv: android.widget.TextView? = null
+    private var updDetailTv: android.widget.TextView? = null
+    private var updProgView: UpdProgressView? = null
+    private var updProgBox: View? = null
+    private var updFocusables: List<View> = emptyList()
     private var updBusy = false
-    private var updLabel = "Güncelle"
-    private var updFocusables: List<android.view.View> = emptyList()
+    private var updHidden = false                             // indirme sürerken modal gizlendi
+    private var updState = UPD_IDLE
+    private var updReadyApk: File? = null
     private class UpdArgs(val url: String, val ver: String, val size: Long, val notes: String, val code: Int)
     private var updArgs: UpdArgs? = null
 
+    private val uiHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
-    private fun setUpdBusy(busy: Boolean, label: String = "Güncelle") {
-        updBusy = busy; updLabel = label
-        updBtn?.text = label
-    }
-
-    /** Şeridi kapatır; dismiss=true ise bu sürüm için bir daha gösterilmez. Odağı sayfaya geri verir. */
+    /** Modalı animasyonla kaldırır. dismiss=true ise bu sürüm bir daha gösterilmez. Odağı sayfaya geri verir. */
     private fun closeUpdateBanner(dismiss: Boolean) {
         if (dismiss) updArgs?.let { getSharedPreferences("umittv", MODE_PRIVATE).edit().putInt("upd_dismissed", it.code).apply() }
-        (updBanner?.parent as? ViewGroup)?.removeView(updBanner)
-        updBanner = null; updBtn = null; updFocusables = emptyList()
-        updBusy = false; updLabel = "Güncelle"; updArgs = null
+        removeUpdModalViews()
+        updBusy = false; updState = UPD_IDLE; updArgs = null; updHidden = false; updReadyApk = null
+        stopUpdPoll()
         web.requestFocus()
     }
 
-    /** Şerit bir şekilde sökülmüşse (ör. izin ekranından dönüşte) ve güncelleme sürüyorsa yeniden kurar. */
-    private fun ensureUpdBanner() {
-        val a = updArgs ?: return
-        if (updBanner == null) showUpdateBanner(a.url, a.ver, a.size, a.notes, a.code)
+    /** "Sonra": bu sürümü kalıcı susturmaz, 6 saat sonra tekrar hatırlatır. */
+    private fun snoozeUpdate() {
+        getSharedPreferences("umittv", MODE_PRIVATE).edit()
+            .putLong("upd_snooze_until", System.currentTimeMillis() + 6L * 60 * 60 * 1000).apply()
+        closeUpdateBanner(false)
     }
 
-    /** Nuvio tarzı üst şerit: sürüm • boyut, "Güncelleme var", bilgi (i), Güncelle, kapat (X). Kumanda ile kullanılır. */
-    private fun showUpdateBanner(apkUrl: String, versionName: String, sizeBytes: Long, notes: String, code: Int) {
+    /** İndirme sürerken modalı gizler; indirme arkada devam eder, bitince kurulum açılır. */
+    private fun hideUpdateModal() {
+        updHidden = true
+        removeUpdModalViews()
+        web.requestFocus()
+    }
+
+    private fun onUpdBack() { if (updBusy) hideUpdateModal() else snoozeUpdate() }
+
+    private var webTopAnim: ValueAnimator? = null
+    /** Web sayfasını modalın altına iter (modal butonların üstüne binmesin) ve yumuşakça geri alır. */
+    private fun animateWebTop(target: Int) {
+        var lp = web.layoutParams as? FrameLayout.LayoutParams ?: return
+        if (lp === match) { lp = FrameLayout.LayoutParams(lp); web.layoutParams = lp }   // ortak 'match' nesnesini bozma
+        if (lp.topMargin == target) return
+        webTopAnim?.cancel()
+        webTopAnim = ValueAnimator.ofInt(lp.topMargin, target).apply {
+            duration = 320; interpolator = android.view.animation.DecelerateInterpolator()
+            addUpdateListener {
+                val l = web.layoutParams as? FrameLayout.LayoutParams ?: return@addUpdateListener
+                l.topMargin = it.animatedValue as Int; web.layoutParams = l
+            }
+            start()
+        }
+    }
+
+    private fun removeUpdModalViews() {
+        val ov = updBanner
+        updBanner = null; updCard = null; updBtn = null; updSecBtn = null
+        updStatusTv = null; updPctTv = null; updDetailTv = null; updProgView = null; updProgBox = null
+        updFocusables = emptyList()
+        animateWebTop(0)
+        if (ov == null) return
+        ov.animate().translationY(-(ov.height + dp(40)).toFloat()).alpha(0f).setDuration(280)
+            .setInterpolator(android.view.animation.AccelerateInterpolator())
+            .withEndAction { (ov.parent as? ViewGroup)?.removeView(ov) }.start()
+    }
+
+    /** Güncelleme bitti: modal yukarı çıkıp kaybolur. İptal edilen kurulum için 10 dk sonra tekrar hatırlatır. */
+    private fun finishUpdateModal() {
+        getSharedPreferences("umittv", MODE_PRIVATE).edit()
+            .putLong("upd_snooze_until", System.currentTimeMillis() + 10L * 60 * 1000).apply()
+        closeUpdateBanner(false)
+    }
+
+    /** Modal bir şekilde sökülmüşse (ör. izin ekranından dönüşte) ve güncelleme sürüyorsa yeniden kurar. */
+    private fun ensureUpdBanner() {
+        val a = updArgs ?: return
+        if (updHidden) return
+        if (updBanner == null) showUpdateBanner(a.url, a.ver, a.size, a.notes, a.code, false)
+    }
+
+    private fun fmtMb(bytes: Long): String = String.format(java.util.Locale.forLanguageTag("tr-TR"), "%.1f", bytes / 1048576.0)
+
+    private fun fmtSpeed(bps: Float): String =
+        if (bps >= 1048576f) String.format(java.util.Locale.forLanguageTag("tr-TR"), "%.1f MB/sn", bps / 1048576f)
+        else String.format(java.util.Locale.forLanguageTag("tr-TR"), "%d KB/sn", (bps / 1024f).toInt())
+
+    /** Üstten animasyonla inen, sayfayı aşağı iten (butonlara binmeyen) güncelleme modalı. Kumanda ile kullanılır. */
+    private fun showUpdateBanner(apkUrl: String, versionName: String, sizeBytes: Long, notes: String, code: Int, chime: Boolean = true) {
         if (updBanner != null || isFinishing) return
+        updHidden = false
         updArgs = UpdArgs(apkUrl, versionName, sizeBytes, notes, code)
         val ver = versionName.trim().removePrefix("ÜmitTV").trim().ifBlank { "yeni sürüm" }
-        val title = buildString {
-            append(if (ver.firstOrNull()?.isDigit() == true) "v$ver" else ver)
-            if (sizeBytes > 0) append(" • ").append(Math.max(1L, Math.round(sizeBytes / 1048576.0))).append(" MB")
-        }
+        val verLabel = if (ver.firstOrNull()?.isDigit() == true) "v$ver" else ver
+        val sub = verLabel + if (sizeBytes > 0) "  •  " + Math.max(1L, Math.round(sizeBytes / 1048576.0)).toString() + " MB" else ""
+        val ORANGE = Color.parseColor("#F97316"); val AMBER = Color.parseColor("#FBBF24")
         val sbH = resources.getIdentifier("status_bar_height", "dimen", "android").let { if (it > 0) resources.getDimensionPixelSize(it) else 0 }
-        val bar = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(10), dp(8), dp(10))
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(Color.parseColor("#F2262A33")); cornerRadius = dp(16).toFloat()
+
+        val card = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.parseColor("#FF2A231B"), Color.parseColor("#FF15120E"))).apply {
+                cornerRadius = dp(22).toFloat(); setStroke(dp(1), Color.parseColor("#55F97316"))
             }
-            elevation = dp(8).toFloat()
+            elevation = dp(16).toFloat()
+            layoutTransition = android.animation.LayoutTransition().apply { enableTransitionType(android.animation.LayoutTransition.CHANGING) }
         }
+
+        // ── üst satır: simge • metin • düğmeler ──
+        val row = android.widget.LinearLayout(this).apply { orientation = android.widget.LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val icon = android.widget.ImageView(this).apply {
+            setImageResource(R.mipmap.ic_launcher)
+            scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+            clipToOutline = true
+            outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(12).toFloat()) }
+            }
+        }
+        row.addView(icon, android.widget.LinearLayout.LayoutParams(dp(44), dp(44)))
         val texts = android.widget.LinearLayout(this).apply { orientation = android.widget.LinearLayout.VERTICAL }
         texts.addView(android.widget.TextView(this).apply {
-            text = title; setTextColor(Color.WHITE); textSize = 17f; setTypeface(typeface, android.graphics.Typeface.BOLD)
+            text = "Yeni sürüm hazır"; setTextColor(Color.WHITE); textSize = 16f
+            setTypeface(typeface, android.graphics.Typeface.BOLD); maxLines = 1
         })
         texts.addView(android.widget.TextView(this).apply {
-            text = "Güncelleme var"; setTextColor(Color.parseColor("#B8BCC6")); textSize = 13f
+            text = sub; setTextColor(Color.parseColor("#FDBA74")); textSize = 13f; maxLines = 1
         })
-        bar.addView(texts, android.widget.LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(texts, android.widget.LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(12); rightMargin = dp(8) })
 
-        // Kumanda odağı: odaklanan düğme belirgin çerçeve alır
-        fun styleFocus(v: android.view.View, normal: Int, focused: Int, radius: Int) {
-            fun bg(c: Int, stroke: Boolean) = android.graphics.drawable.GradientDrawable().apply {
-                setColor(c); cornerRadius = dp(radius).toFloat()
-                if (stroke) setStroke(dp(2), Color.WHITE)
-            }
-            v.background = bg(normal, false)
-            v.setOnFocusChangeListener { _, f -> v.background = bg(if (f) focused else normal, f) }
+        fun gradBg(c1: Int, c2: Int, stroke: Boolean) = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(c1, c2)).apply {
+            cornerRadius = dp(14).toFloat(); if (stroke) setStroke(dp(2), Color.WHITE)
         }
-
-        val infoBtn = android.widget.TextView(this).apply {
-            text = "ⓘ"; setTextColor(Color.WHITE); textSize = 22f; gravity = Gravity.CENTER
-            setPadding(dp(10), dp(4), dp(10), dp(4)); isFocusable = true; isClickable = true
-            setOnClickListener {
-                AlertDialog.Builder(this@MainActivity).setTitle("Güncelleme $title")
-                    .setMessage(if (notes.isNotBlank()) notes else "Uygulamanın yeni bir sürümü hazır.")
-                    .setPositiveButton("Tamam", null).show()
+        fun styleBtn(v: View, c1: Int, c2: Int) {
+            v.background = gradBg(c1, c2, false)
+            v.setOnFocusChangeListener { _, f ->
+                v.background = gradBg(c1, c2, f)
+                v.animate().scaleX(if (f) 1.06f else 1f).scaleY(if (f) 1.06f else 1f).setDuration(120).start()
             }
         }
-        styleFocus(infoBtn, Color.TRANSPARENT, Color.parseColor("#66FFFFFF"), 20)
-        bar.addView(infoBtn)
-
-        val updateBtn = android.widget.TextView(this).apply {
-            text = updLabel; setTextColor(Color.BLACK); textSize = 15f; gravity = Gravity.CENTER
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setPadding(dp(18), dp(10), dp(18), dp(10)); isFocusable = true; isClickable = true
-            setOnClickListener {
-                if (updBusy) { toast("Güncelleme zaten sürüyor…"); return@setOnClickListener }
-                // Şerit kapanmaz: izin ekranına gidip dönünce de yerinde kalır
-                setUpdBusy(true, "Hazırlanıyor…")
-                beginDownload(apkUrl)
-            }
+        val secBtn = android.widget.TextView(this).apply {
+            text = "Sonra"; setTextColor(Color.WHITE); textSize = 14f; gravity = Gravity.CENTER
+            setTypeface(typeface, android.graphics.Typeface.BOLD); isFocusable = true; isClickable = true
+            setPadding(dp(14), 0, dp(14), 0)
+            setOnClickListener { if (!updBusy) snoozeUpdate() }
         }
-        styleFocus(updateBtn, Color.WHITE, Color.parseColor("#F97316"), 22)
-        bar.addView(updateBtn, android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(4) })
-
-        val closeBtn = android.widget.TextView(this).apply {
-            text = "✕"; setTextColor(Color.WHITE); textSize = 20f; gravity = Gravity.CENTER
-            setPadding(dp(12), dp(4), dp(12), dp(4)); isFocusable = true; isClickable = true
-            setOnClickListener { closeUpdateBanner(true) }
+        styleBtn(secBtn, Color.parseColor("#26FFFFFF"), Color.parseColor("#26FFFFFF"))
+        val priBtn = android.widget.TextView(this).apply {
+            text = "Güncelle"; setTextColor(Color.parseColor("#1A0F05")); textSize = 14.5f; gravity = Gravity.CENTER
+            setTypeface(typeface, android.graphics.Typeface.BOLD); isFocusable = true; isClickable = true
+            setPadding(dp(18), 0, dp(18), 0)
+            setOnClickListener { onUpdPrimaryClick() }
         }
-        styleFocus(closeBtn, Color.TRANSPARENT, Color.parseColor("#66FFFFFF"), 20)
-        bar.addView(closeBtn)
+        styleBtn(priBtn, ORANGE, AMBER)
+        row.addView(secBtn, android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)))
+        row.addView(priBtn, android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)).apply { leftMargin = dp(8) })
+        card.addView(row, android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
+        // ── ilerleme bölümü (indirme başlayınca açılır) ──
+        val progBox = android.widget.LinearLayout(this).apply { orientation = android.widget.LinearLayout.VERTICAL; visibility = View.GONE }
+        val rowTop = android.widget.LinearLayout(this).apply { orientation = android.widget.LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val statusTv = android.widget.TextView(this).apply { setTextColor(Color.WHITE); textSize = 13.5f; setTypeface(typeface, android.graphics.Typeface.BOLD) }
+        val pctTv = android.widget.TextView(this).apply { setTextColor(Color.parseColor("#FDBA74")); textSize = 13.5f; setTypeface(typeface, android.graphics.Typeface.BOLD) }
+        rowTop.addView(statusTv, android.widget.LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        rowTop.addView(pctTv)
+        val prog = UpdProgressView(this)
+        val detailTv = android.widget.TextView(this).apply { setTextColor(Color.parseColor("#8F93A0")); textSize = 12f }
+        progBox.addView(rowTop)
+        progBox.addView(prog, android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(8)).apply { topMargin = dp(8) })
+        progBox.addView(detailTv, android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
+        card.addView(progBox, android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
+
+        updBanner = card; updCard = card; updBtn = priBtn; updSecBtn = secBtn
+        updStatusTv = statusTv; updPctTv = pctTv; updDetailTv = detailTv; updProgView = prog; updProgBox = progBox
+
+        // sayfayı kartın altına it: kart hiçbir butonun üstüne binmesin
+        card.addOnLayoutChangeListener { _, _, _, _, b, _, _, _, _ ->
+            if (updBanner === card) animateWebTop(b + dp(6))
+        }
         val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP)
             .apply { setMargins(dp(10), sbH + dp(6), dp(10), 0) }
-        updBanner = bar; updBtn = updateBtn
-        updFocusables = listOf(infoBtn, updateBtn, closeBtn)
-        root.addView(bar, lp)
-        bar.bringToFront()
-        updateBtn.requestFocus()   // kumandayla açılışta "Güncelle" düğmesi seçili gelir
+        root.addView(card, lp)
+        card.bringToFront()
+
+        // yukarıdan aşağı iniş animasyonu
+        card.alpha = 0f; card.translationY = -dp(200).toFloat()
+        card.animate().alpha(1f).translationY(0f).setDuration(520)
+            .setInterpolator(android.view.animation.OvershootInterpolator(0.8f)).start()
+
+        setUpdState(updState)
+        if (updState == UPD_DL && pendingDownloadId != -1L) startUpdPoll()
+        if (chime) {
+            playUpdateChime()
+            runCatching { card.performHapticFeedback(android.view.HapticFeedbackConstants.CONTEXT_CLICK) }
+        }
+    }
+
+    private fun onUpdPrimaryClick() {
+        when (updState) {
+            UPD_IDLE, UPD_ERR -> startUpdateFlow()
+            UPD_READY -> {
+                val apk = updReadyApk
+                if (apk != null && apk.exists()) installApk(apk) else startUpdateFlow()
+            }
+            else -> { /* indirme sürüyor */ }
+        }
+    }
+
+    private fun startUpdateFlow() {
+        val a = updArgs ?: return
+        updReadyApk = null
+        setUpdState(UPD_PREP)
+        beginDownload(a.url)
+    }
+
+    /** Modalın tüm görünümünü duruma göre günceller. */
+    private fun setUpdState(st: Int, msg: String = "") {
+        updState = st
+        updBusy = st == UPD_PREP || st == UPD_PERM || st == UPD_DL || st == UPD_INSTALLING
+        val box = updProgBox ?: return
+        val pri = updBtn ?: return
+        val sec = updSecBtn ?: return
+        val status = updStatusTv; val pct = updPctTv; val detail = updDetailTv; val pv = updProgView
+        status?.setTextColor(Color.WHITE)
+        pri.alpha = if (updBusy) 0.78f else 1f
+        when (st) {
+            UPD_IDLE -> {
+                box.visibility = View.GONE; sec.visibility = View.VISIBLE; pri.text = "Güncelle"
+            }
+            UPD_PREP -> {
+                box.visibility = View.VISIBLE; sec.visibility = View.GONE; pri.text = "Hazırlanıyor…"
+                status?.text = "Hazırlanıyor…"; pct?.text = ""; detail?.text = "Sunucuya bağlanılıyor"
+                pv?.indeterminate = true
+            }
+            UPD_PERM -> {
+                box.visibility = View.VISIBLE; sec.visibility = View.GONE; pri.text = "İzin bekleniyor…"
+                status?.text = "İzin bekleniyor…"; pct?.text = ""; detail?.text = "Açılan ekranda ÜmitTV için izni aç, sonra geri dön"
+                pv?.indeterminate = true
+            }
+            UPD_DL -> {
+                box.visibility = View.VISIBLE; sec.visibility = View.GONE; pri.text = "İndiriliyor…"
+                status?.text = "İndiriliyor…"
+                if (pv != null && pv.target <= 0f) pv.indeterminate = true
+            }
+            UPD_INSTALLING -> {
+                box.visibility = View.VISIBLE; sec.visibility = View.GONE; pri.text = "Kuruluma geçiliyor…"
+                status?.text = "İndirme tamamlandı"; pct?.text = "100%"; detail?.text = "Kurulum ekranı açılıyor…"
+                pv?.indeterminate = false; pv?.setTarget(1f)
+            }
+            UPD_READY -> {
+                box.visibility = View.VISIBLE; sec.visibility = View.VISIBLE; pri.text = "Şimdi yükle"
+                status?.text = "Kuruluma hazır"; pct?.text = "100%"; detail?.text = "Kurulumu iptal ettiysen “Şimdi yükle”ye bas"
+                pv?.indeterminate = false; pv?.setTarget(1f)
+            }
+            UPD_ERR -> {
+                box.visibility = View.VISIBLE; sec.visibility = View.VISIBLE; pri.text = "Tekrar dene"
+                status?.text = msg.ifBlank { "Bir sorun oluştu" }; status?.setTextColor(Color.parseColor("#F87171"))
+                pct?.text = ""; detail?.text = "Bağlantını kontrol edip tekrar dene"
+                pv?.indeterminate = false; pv?.setTarget(0f)
+            }
+        }
+        updFocusables = if (sec.visibility == View.VISIBLE) listOf(sec, pri) else listOf(pri)
+        pri.requestFocus()      // odak web sayfasına kaçmasın
+    }
+
+    // ── İndirme ilerlemesi (DownloadManager'ı 250 ms'de bir okur) ──
+    private var updPollOn = false
+    private var updLastBytes = 0L
+    private var updLastT = 0L
+    private var updSpeed = 0f
+    private val updPoll = object : Runnable {
+        override fun run() {
+            if (!updPollOn || pendingDownloadId == -1L) { updPollOn = false; return }
+            pollDownloadOnce()
+            uiHandler.postDelayed(this, 250)
+        }
+    }
+
+    private fun startUpdPoll() {
+        if (updPollOn) return
+        updPollOn = true; updLastBytes = 0L; updLastT = SystemClock.uptimeMillis(); updSpeed = 0f
+        uiHandler.post(updPoll)
+    }
+
+    private fun stopUpdPoll() { updPollOn = false; uiHandler.removeCallbacks(updPoll) }
+
+    private fun pollDownloadOnce() {
+        val id = pendingDownloadId
+        if (id == -1L) return
+        val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        var cur: Cursor? = null
+        try {
+            cur = dm.query(DownloadManager.Query().setFilterById(id))
+            if (cur == null || !cur.moveToFirst()) return
+            val st = cur.getInt(cur.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+            val got = cur.getLong(cur.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
+            var total = cur.getLong(cur.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+            if (total <= 0L) total = updArgs?.size ?: 0L
+            val pv = updProgView
+            if (st == DownloadManager.STATUS_PENDING) {
+                updStatusTv?.text = "Sıraya alındı…"; pv?.indeterminate = true; return
+            }
+            if (st == DownloadManager.STATUS_PAUSED) {
+                updStatusTv?.text = "Bağlantı bekleniyor…"; updDetailTv?.text = "İnternet geri gelince devam eder"; return
+            }
+            // hız (yumuşatılmış) ve kalan süre
+            val now = SystemClock.uptimeMillis()
+            val dt = now - updLastT
+            if (dt >= 400L) {
+                val inst = (got - updLastBytes) * 1000f / dt
+                updSpeed = if (updSpeed <= 0f) inst else updSpeed * 0.7f + inst * 0.3f
+                updLastBytes = got; updLastT = now
+            }
+            updStatusTv?.text = "İndiriliyor…"
+            if (total > 0L) {
+                val p = (got.toFloat() / total).coerceIn(0f, 1f)
+                pv?.indeterminate = false; pv?.setTarget(p)
+                updPctTv?.text = (p * 100).toInt().toString() + "%"
+                val sb = StringBuilder(fmtMb(got)).append(" / ").append(fmtMb(total)).append(" MB")
+                if (updSpeed > 20_000f) {
+                    sb.append("  •  ").append(fmtSpeed(updSpeed))
+                    val left = ((total - got) / updSpeed).toInt()
+                    sb.append("  •  ").append(if (left < 60) "~$left sn" else "~${(left + 30) / 60} dk")
+                }
+                updDetailTv?.text = sb.toString()
+            } else {
+                pv?.indeterminate = true
+                updPctTv?.text = ""
+                updDetailTv?.text = fmtMb(got) + " MB indirildi"
+            }
+        } catch (e: Exception) {
+            // sessizce geç
+        } finally { cur?.close() }
+    }
+
+    // ── Premium bildirim sesi: yumuşak çan arpeji (kod ile üretilir, dosya gerekmez) ──
+    private fun playUpdateChime() {
+        Thread {
+            var track: AudioTrack? = null
+            try {
+                val sr = 44100
+                val secs = 2.0
+                val n = (sr * secs).toInt()
+                val dry = FloatArray(n)
+                val freq = doubleArrayOf(659.25, 880.00, 1108.73, 1318.51)   // E5 A5 C#6 E6 (A majör arpej)
+                val start = doubleArrayOf(0.00, 0.10, 0.20, 0.32)
+                val amp = doubleArrayOf(0.50, 0.46, 0.42, 0.56)
+                for (k in freq.indices) {
+                    val s0 = (start[k] * sr).toInt()
+                    val decay = if (k == 3) 2.2 else 3.4
+                    for (i in s0 until n) {
+                        val t = (i - s0) / sr.toDouble()
+                        if (t > 1.7) break
+                        val env = (1.0 - Math.exp(-t * 700.0)) * Math.exp(-t * decay)
+                        val w = 2.0 * Math.PI * freq[k] * t
+                        val s = Math.sin(w) +
+                            0.30 * Math.sin(2.0 * w) * Math.exp(-t * 3.0) +
+                            0.10 * Math.sin(3.01 * w) * Math.exp(-t * 6.0) +
+                            0.04 * Math.sin(5.4 * w) * Math.exp(-t * 12.0)
+                        dry[i] += (amp[k] * env * s).toFloat()
+                    }
+                }
+                // yumuşak yankı
+                val d1 = (0.16 * sr).toInt(); val d2 = (0.33 * sr).toInt()
+                val mix = FloatArray(n)
+                for (i in 0 until n) {
+                    var v = dry[i]
+                    if (i >= d1) v += dry[i - d1] * 0.26f
+                    if (i >= d2) v += dry[i - d2] * 0.12f
+                    mix[i] = v
+                }
+                var peak = 0.0001f
+                for (v in mix) { val a = Math.abs(v); if (a > peak) peak = a }
+                val g = 0.55f / peak
+                val fade = (0.25 * sr).toInt()
+                val pcm = ShortArray(n)
+                for (i in 0 until n) {
+                    var v = mix[i] * g
+                    val left = n - i
+                    if (left < fade) v *= left / fade.toFloat()
+                    pcm[i] = (v.coerceIn(-1f, 1f) * 32767f).toInt().toShort()
+                }
+                val t = AudioTrack.Builder()
+                    .setAudioAttributes(AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+                    .setAudioFormat(AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(sr)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+                    .setBufferSizeInBytes(pcm.size * 2)
+                    .setTransferMode(AudioTrack.MODE_STATIC)
+                    .build()
+                track = t
+                t.write(pcm, 0, pcm.size)
+                t.play()
+                Thread.sleep((secs * 1000).toLong() + 200L)
+            } catch (e: Throwable) {
+                // ses çalınamazsa sessizce geç
+            } finally {
+                try { track?.stop() } catch (e: Throwable) { }
+                try { track?.release() } catch (e: Throwable) { }
+            }
+        }.start()
     }
 
     private fun showUpdateDialog(apkUrl: String, versionName: String, notes: String) {
@@ -1090,7 +1410,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             // Android 8+: "Bilinmeyen kaynaklar" izni bu uygulama için ayrıca açılmalı
             pendingApkUrl = apkUrl
             awaitingInstallPermission = true
-            setUpdBusy(true, "İzin bekleniyor…")
+            setUpdState(UPD_PERM)
             toast("Kurulum için bir sonraki ekranda ÜmitTV'ye izin ver")
             try {
                 val i = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
@@ -1103,27 +1423,26 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         startApkDownload(apkUrl)
     }
 
-    /** Ayarlar ekranından dönünce: izin verildiyse indirmeye devam et, verilmediyse şerit yerinde kalır. */
+    /** Ayarlar ekranından dönünce: izin verildiyse indirmeye devam et, verilmediyse modal yerinde kalır. */
     private fun checkPendingInstallResume(fromResult: Boolean = false) {
         if (!awaitingInstallPermission) return
         val granted = canInstallUnknown()
         if (!granted && !fromResult) return          // izin ekranı hâlâ açık olabilir; sonucu bekle
         awaitingInstallPermission = false
         val u = pendingApkUrl; pendingApkUrl = null
+        updHidden = false
         ensureUpdBanner()
         if (granted && u != null) {
-            setUpdBusy(true, "İndiriliyor…")
+            setUpdState(UPD_PREP)
             startApkDownload(u)
         } else {
-            setUpdBusy(false)
-            toast("Kurulum izni verilmedi. Güncellemek için izin vermen gerekiyor.")
+            setUpdState(UPD_ERR, "Kurulum izni verilmedi")
         }
     }
 
     /** Özel depodaki APK: token ile asset adresine gidip kısa ömürlü imzalı indirme adresini alır, DownloadManager'a onu verir. */
     private fun startApkDownload(apkUrl: String) {
         if (!apkUrl.startsWith("https://api.github.com/")) { enqueueApk(apkUrl); return }
-        toast("Güncelleme hazırlanıyor…")
         Thread {
             var signed: String? = null
             try {
@@ -1136,7 +1455,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 c.disconnect()
             } catch (e: Exception) { }
             runOnUiThread {
-                if (signed.isNullOrBlank()) { setUpdBusy(false); toast("Güncelleme adresi alınamadı") } else enqueueApk(signed!!)
+                if (signed.isNullOrBlank()) setUpdState(UPD_ERR, "Güncelleme adresi alınamadı") else enqueueApk(signed!!)
             }
         }.start()
     }
@@ -1159,10 +1478,10 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 .setAllowedOverMetered(true)
                 .setAllowedOverRoaming(true)
             pendingDownloadId = dm.enqueue(req)
-            toast("Güncelleme indiriliyor, bitince kurulum ekranı açılacak")
+            setUpdState(UPD_DL)
+            startUpdPoll()
         } catch (e: Exception) {
-            setUpdBusy(false)
-            toast("İndirme başlatılamadı: ${e.message}")
+            setUpdState(UPD_ERR, "İndirme başlatılamadı")
         }
     }
 
@@ -1183,13 +1502,20 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 if (cur != null && cur.moveToFirst()) {
                     val statusIdx = cur.getColumnIndex(DownloadManager.COLUMN_STATUS)
                     val status = if (statusIdx >= 0) cur.getInt(statusIdx) else -1
+                    stopUpdPoll()
                     if (status == DownloadManager.STATUS_SUCCESSFUL) {
                         val apk = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), pendingApkName)
-                        installApk(apk)
-                        setUpdBusy(false)   // kurulum iptal edilirse şerit yeniden "Güncelle" olur
+                        updReadyApk = apk
+                        if (updHidden) { updHidden = false; ensureUpdBanner() }   // gizliydiyse bitince modalı geri getir
+                        setUpdState(UPD_INSTALLING)
+                        uiHandler.postDelayed({
+                            if (isFinishing) return@postDelayed
+                            if (installApk(apk)) { setUpdState(UPD_READY); uiHandler.postDelayed({ if (!isFinishing && updState == UPD_READY) finishUpdateModal() }, 1600) }
+                            else { updReadyApk = null; setUpdState(UPD_ERR, "İndirilen dosya geçersiz") }
+                        }, 700)
                     } else {
-                        setUpdBusy(false)
-                        toast("Güncelleme indirilemedi, tekrar dener misin?")
+                        if (updHidden) { updHidden = false; ensureUpdBanner() }
+                        setUpdState(UPD_ERR, "İndirme başarısız oldu")
                     }
                 }
             } finally {
@@ -1199,24 +1525,94 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         }
     }
 
-    private fun installApk(apk: File) {
-        if (!apk.exists()) { toast("Güncelleme dosyası bulunamadı"); return }
+    private fun installApk(apk: File): Boolean {
+        if (!apk.exists()) { toast("Güncelleme dosyası bulunamadı"); return false }
         // Dosya gerçekten daha yeni bir ÜmitTV APK'sı mı? (bozuk/eski dosya "Uygulama yüklenmedi" hatası verir)
         val info = runCatching { packageManager.getPackageArchiveInfo(apk.absolutePath, 0) }.getOrNull()
-        if (info == null) { toast("İndirilen dosya bozuk (" + (apk.length() / 1024) + " KB), tekrar dene"); return }
+        if (info == null) { toast("İndirilen dosya bozuk (" + (apk.length() / 1024) + " KB), tekrar dene"); return false }
         val newCode = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode.toInt() else @Suppress("DEPRECATION") info.versionCode
         if (info.packageName != packageName || newCode <= currentVersionCode()) {
-            toast("İndirilen dosya eski sürüm (kod $newCode, kurulu ${currentVersionCode()}), tekrar dene"); return
+            toast("İndirilen dosya eski sürüm (kod $newCode, kurulu ${currentVersionCode()}), tekrar dene"); return false
         }
-        try {
+        return try {
             val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", apk)
             val i = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, "application/vnd.android.package-archive")
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             startActivity(i)
+            true
         } catch (e: Exception) {
             toast("Kurulum ekranı açılamadı: ${e.message}")
+            false
+        }
+    }
+}
+
+// ── Güncelleme modalı yardımcıları ───────────────────────────────
+private const val UPD_IDLE = 0
+private const val UPD_PREP = 1
+private const val UPD_PERM = 2
+private const val UPD_DL = 3
+private const val UPD_INSTALLING = 4
+private const val UPD_READY = 5
+private const val UPD_ERR = 6
+
+/** Turuncu→amber degrade dolgulu, parlama efektli, akıcı animasyonlu ilerleme çubuğu (belirsiz modu da var). */
+private class UpdProgressView(ctx: Context) : View(ctx) {
+    private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#26FFFFFF") }
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val shine = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val rect = RectF()
+    private val clip = Path()
+    private var shown = 0f
+    var target = 0f
+        private set
+    private var phase = 0f
+    var indeterminate = false
+        set(v) { field = v; invalidate() }
+
+    private val anim = ValueAnimator.ofFloat(0f, 1f).apply {
+        duration = 1300; repeatCount = ValueAnimator.INFINITE
+        interpolator = android.view.animation.LinearInterpolator()
+        addUpdateListener {
+            phase = it.animatedValue as Float
+            shown += (target - shown) * 0.16f          // hedefe yumuşak yaklaş
+            invalidate()
+        }
+    }
+
+    fun setTarget(p: Float) { target = p.coerceIn(0f, 1f) }
+
+    override fun onAttachedToWindow() { super.onAttachedToWindow(); anim.start() }
+    override fun onDetachedFromWindow() { anim.cancel(); super.onDetachedFromWindow() }
+
+    override fun onDraw(c: Canvas) {
+        val w = width.toFloat(); val h = height.toFloat()
+        if (w <= 0f || h <= 0f) return
+        val r = h / 2f
+        rect.set(0f, 0f, w, h)
+        c.drawRoundRect(rect, r, r, track)
+        val orange = Color.parseColor("#F97316"); val amber = Color.parseColor("#FBBF24")
+        if (indeterminate) {
+            val seg = w * 0.38f
+            val x = -seg + (w + seg) * phase
+            clip.reset(); clip.addRoundRect(rect, r, r, Path.Direction.CW)
+            c.save(); c.clipPath(clip)
+            fill.shader = LinearGradient(x, 0f, x + seg, 0f,
+                intArrayOf(Color.TRANSPARENT, orange, amber, Color.TRANSPARENT), floatArrayOf(0f, 0.3f, 0.7f, 1f), Shader.TileMode.CLAMP)
+            c.drawRect(x, 0f, x + seg, h, fill)
+            c.restore()
+        } else if (shown > 0.002f) {
+            val fw = Math.max(h, w * shown)
+            rect.set(0f, 0f, fw, h)
+            fill.shader = LinearGradient(0f, 0f, fw, 0f, orange, amber, Shader.TileMode.CLAMP)
+            c.drawRoundRect(rect, r, r, fill)
+            val sw = Math.max(h * 4f, fw * 0.3f)
+            val sx = -sw + (fw + sw) * phase
+            shine.shader = LinearGradient(sx, 0f, sx + sw, 0f,
+                intArrayOf(0x00FFFFFF, 0x55FFFFFF, 0x00FFFFFF), null, Shader.TileMode.CLAMP)
+            c.drawRoundRect(rect, r, r, shine)
         }
     }
 }
