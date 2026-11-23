@@ -63,6 +63,9 @@ import java.util.concurrent.TimeUnit
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 /** ÜmitTV – REMOTE_URL'deki sayfayı tam ekran WebView'de açar (sayfa APK'nın içinde gömülü değil).
  *  v1.1: mikrofon (sesli komut), dosya ekleme, direksiyon tuşlarıyla kanal değiştirme. */
@@ -83,35 +86,57 @@ open class MainActivity : Activity() {
             return String(out, Charsets.UTF_8)
         }
         private const val OBF_KEY = 0x5A
+
+        // ───── AES-256-GCM ile gizlenmiş sabitler: anahtar TEK PARÇA halinde hiçbir yerde yazılı değil.
+        // 4 ayrı (anlamsız isimli) dizi + maskeleme + SHA-256 geçişinden sonra oluşuyor; statik string
+        // taramasıyla ya da gözle okunarak elde edilemez, yalnızca bu kodu ÇALIŞTIRARAK üretilebilir.
+        private const val S_MASK = 0x7E
+        private val S_P1 = intArrayOf(2, 107, 150, 153, 63, 36, 85, 248)
+        private val S_P2 = intArrayOf(89, 141, 206, 157, 242, 101, 75, 108)
+        private val S_P3 = intArrayOf(137, 42, 164, 216, 187, 239, 55, 95)
+        private val S_P4 = intArrayOf(159, 205, 163, 170, 157, 218, 218, 111)
+        private fun sKey(): ByteArray {
+            val seed = ByteArray(32)
+            var i = 0
+            for (p in arrayOf(S_P1, S_P2, S_P3, S_P4)) for (v in p) { seed[i] = (v xor S_MASK).toByte(); i++ }
+            return MessageDigest.getInstance("SHA-256").digest(seed)
+        }
+        /** b64 = iv(12) + AES-256-GCM şifreli metin + tag. Statik taramada ne URL ne anahtar görünür. */
+        private fun sdeobf(b64: String): String {
+            val data = android.util.Base64.decode(b64, android.util.Base64.NO_WRAP)
+            val iv = data.copyOfRange(0, 12)
+            val ct = data.copyOfRange(12, data.size)
+            val c = Cipher.getInstance("AES/GCM/NoPadding")
+            c.init(Cipher.DECRYPT_MODE, SecretKeySpec(sKey(), "AES"), GCMParameterSpec(128, iv))
+            return String(c.doFinal(ct), Charsets.UTF_8)
+        }
         /** Sayfanın çekileceği uzak adres. GitHub Pages bunu text/html olarak sunmalı (uzantısız dosyalarda
          *  bazı sunucular "application/octet-stream" döner; o durumda WebView sayfayı HTML olarak yorumlayamaz —
          *  gerekiyorsa dosyayı index.html adıyla barındırın ya da klasörün sonuna "/" ekleyin). */
-        private val REMOTE_URL = deobf("Mi8oLS1lT04XDg0RC1cMRw0CGAUbDV4YHVw1GRccGQsOVCkQFwvtsebX5ei3zOk=", OBF_KEY)
+        private val REMOTE_URL = sdeobf("KFbhd3CFmVZZ25071PS+RQS7dYsbYE84+CwLl4qap7u1pI3hPs7rxmcy+DNtxlBTgj8/3hwe/x1Fknx6wJNFEntwd+iUDy493BpP")
 
         /** Güncelleme bilgisini buradan okur: {"versionCode":3,"versionName":"1.2","url":"https://.../UmitTV.apk","notes":"..."} */
-        private val UPDATE_MANIFEST_URL = deobf("Mi8oLS1lT04XDg0RC1cMRw0CGAUbDV4YHVw1GRccGQsOVAkQFwv099329OHn8+2n4Pjj4w==", OBF_KEY)
-        private val TRUSTED_PREFIX = deobf("Mi8oLS1lT04XDg0RC1cMRw0CGAUbDV4YHVw=", OBF_KEY)
+        private val UPDATE_MANIFEST_URL = sdeobf("1Slcw75nbapZQYImNhOmyCwGqcKE7+HqNq578Kx4Eyg7la/u45CpTkwj29iqokvtsVeCKHEdZQ44sDdvUqZM9QeiHZDBZHoaOVnShFFYUPg=")
+        private val TRUSTED_PREFIX = sdeobf("okekkDQySlNzMYzkDDpnseCTpOSwO91caKGc4hJTCKrCztm+1CRiM3SwQO/MhrnZQ2L4hHOU")
         private const val UPDATE_CHECK_MIN_GAP_MS = 10L * 1000   // en az 10 sn arayla kontrol (Worker önbellekli, ucuz)
         /** Uygulama açıkken kaç sn'de bir yeni sürüme bakılır. */
         private const val UPDATE_POLL_MS = 15L * 1000
         /** Cloudflare Worker adresi (worker.js). Örn: "https://umittv-update.KULLANICI.workers.dev". Boşsa doğrudan GitHub'a bakılır. */
-        private const val UPDATE_WORKER_URL = "https://gncel.umitm0d.workers.dev"
+        private val UPDATE_WORKER_URL = sdeobf("fdsmMrt5wooAjrK/yu4vbhpAHl05P3U8NHEsLr9KJ9DNo9qRgjV9JNaObXWKYt6VKxAst0cHJPqtoiuGxQ==")
         /** Worker'da APP_KEY secret'ı tanımlıysa buraya aynısını yaz; yoksa boş bırak. */
         private const val UPDATE_WORKER_KEY = ""
         private val REL_TOKEN: String by lazy { if (BuildConfig.REL_TOKEN.isBlank()) "" else deobf(BuildConfig.REL_TOKEN, OBF_KEY) }
-        private const val GITHUB_LATEST_API = "https://api.github.com/repos/KiNGTV2025/tvizle-releases/releases/latest"
+        private val GITHUB_LATEST_API = sdeobf("PM0+LaTe5yHrgOGbOlAZz+W4fueh3GKJSerrpJG5WCFhLMQOivLC6pXekDuXsJR2iOicxgmTFZH8nY8CCU+yuzYIuxIWD/OPF4uhZNo2yudhMS3is+g8aDgRf/XZZyjun2XU")
 
         // ───────── Modlamaya karşı koruma ─────────
         // 1) Yerel imza kontrolü: APK başka bir anahtarla yeniden imzalanmışsa (modlanmışsa) SHA-256 değişir.
         // 2) Uzak kapatma anahtarı: GitHub Pages'teki küçük JSON dosyası "enabled":false derse,
         //    APK güncellemesi yapmadan, mevcut kurulumları uzaktan kapatabilirsiniz (ör. sızan bir sürümü iptal etmek için).
         /** Resmi imzanızın SHA-256'sı (keytool/apk imza bilgisinden alındı). Kolon yok, büyük harf. */
-        private val EXPECTED_SIG_SHA256 = deobf(
-            "amhrHhwbJCJXVSckUyJZW19ZWCwtXUIwNkMxTDVGSzhKSDpES0qxxLq7srO+tLrIvM+1u8rN0qGhpqbWp6apqg==", OBF_KEY)
+        private val EXPECTED_SIG_SHA256 = sdeobf("TxmzIJG59Ex9hRjuLS/VMHxoS3bsgveHZrn++SDrOgKtVy4A6K6AxHkg/DruQxuo3a/0eoPblshnnBTZh2zhf07dH/PkumJiPocOul8nWVjG8gdsEl44UjL0O5Q=")
         /** GitHub Pages'teki kapatma anahtarı dosyası: {"enabled":true} ya da ayrıca {"sig":["<SHA256>",...]} ile
          *  ek/alternatif imzalara da izin verebilirsiniz. Dosya yoksa/ağ hatasında uygulama normal açılır (kilitlenmez). */
-        private val INTEGRITY_URL = deobf(
-            "Mi8oLS1lT04XDg0RC1cMRw0CGAUbDV4YHVw1GRccGQsOVAkQFwv0993q6vHj4Prg/vKi5/3g/g==", OBF_KEY)
+        private val INTEGRITY_URL = sdeobf("zE7oMOCAZWNukbeDTn80qebhywPewUFGlvaaJaL3UhtQFAzXLXRBjt7kumetfafExx6CCuyjleCrf+GeOp9WEw4UjsDiRTo3M3szuRFTFLKFIqw=")
         /** Şifreli sayfa blob'u (Pages'te düz HTML yok) ve anahtar adresi (Worker /pk). */
         private val BLOB_URL = REMOTE_URL + ".dat"
         private val KEY_URL = UPDATE_WORKER_URL + "/pk"
