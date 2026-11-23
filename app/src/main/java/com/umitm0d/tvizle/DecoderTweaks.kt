@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.common.TrackSelectionParameters
 
 /**
@@ -24,6 +26,25 @@ object DecoderTweaks {
         val wide = ctx.resources.configuration.smallestScreenWidthDp >= 600
         return noPhone && wide
     }
+
+    /** Allwinner OMX H.264/HEVC dekoderi bazı kutularda yeşil/mor (kroma hatalı) görüntü üretiyor; en sona itilir. */
+    fun isBrokenHw(name: String): Boolean = name.startsWith("OMX.allwinner", ignoreCase = true)
+
+    private fun isSw(i: MediaCodecInfo): Boolean =
+        i.softwareOnly || i.name.startsWith("c2.android.") || i.name.startsWith("OMX.google.")
+
+    /** Dekoder sırası: preferSw ise yazılım önce; değilse sağlam donanım → yazılım → bozuk donanım (Allwinner). */
+    fun sortDecoders(list: List<MediaCodecInfo>, mime: String, preferSw: Boolean): List<MediaCodecInfo> {
+        if (!mime.startsWith("video/")) return list
+        return if (preferSw) list.sortedBy { i: MediaCodecInfo -> if (isSw(i)) 0 else 1 }
+        else list.sortedBy { i: MediaCodecInfo -> if (isBrokenHw(i.name)) 2 else if (isSw(i)) 1 else 0 }
+    }
+
+    fun selector(preferSw: () -> Boolean): MediaCodecSelector = MediaCodecSelector { mime, secure, tunneling ->
+        sortDecoders(MediaCodecSelector.DEFAULT.getDecoderInfos(mime, secure, tunneling), mime, preferSw())
+    }
+
+    fun isSwName(name: String): Boolean = name.startsWith("c2.android.") || name.startsWith("OMX.google.")
 
     fun renderers(ctx: Context): DefaultRenderersFactory =
         DefaultRenderersFactory(ctx).forceDisableMediaCodecAsynchronousQueueing()

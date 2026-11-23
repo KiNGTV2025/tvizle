@@ -88,11 +88,7 @@ class GridVideo(
 
     private fun ensurePlayer(i: Int, c: Cell): ExoPlayer {
         c.player?.let { return it }
-        val sel = MediaCodecSelector { mime, secure, tunneling ->
-            val list = MediaCodecSelector.DEFAULT.getDecoderInfos(mime, secure, tunneling)
-            if (!c.preferSw || !mime.startsWith("video/")) list
-            else list.sortedBy { d: MediaCodecInfo -> if (d.softwareOnly || d.name.startsWith("c2.android.") || d.name.startsWith("OMX.google.")) 0 else 1 }
-        }
+        val sel = DecoderTweaks.selector { c.preferSw }
         val renderers = DecoderTweaks.renderers(act).setMediaCodecSelector(sel).setEnableDecoderFallback(true)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
         val lc = DefaultLoadControl.Builder().setBufferDurationsMs(8000, 20000, 1500, 3000).build()

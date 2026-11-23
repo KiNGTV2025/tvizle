@@ -459,6 +459,7 @@ class PlayerActivity : Activity() {
             .setUserAgent(if (ua.isNotBlank()) ua else UA)
         if (ref.isNotBlank()) http.setDefaultRequestProperties(mapOf("Referer" to ref))
         val renderers = DecoderTweaks.renderers(this)
+            .setMediaCodecSelector(DecoderTweaks.selector { false })
             .setEnableDecoderFallback(true)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
         // IPTV için: bozuk/kesik TS akışlarını daha toleranslı çöz, hızlı kanal açılışı

@@ -127,11 +127,7 @@ class NativeVideo(
     private var readySince = 0L
     private var swTried = false
     private var hasVideoTrack = false
-    private val codecSelector = MediaCodecSelector { mime, secure, tunneling ->
-        val list = MediaCodecSelector.DEFAULT.getDecoderInfos(mime, secure, tunneling)
-        if (!preferSw || !mime.startsWith("video/")) list
-        else list.sortedBy { i: MediaCodecInfo -> if (i.softwareOnly || i.name.startsWith("c2.android.") || i.name.startsWith("OMX.google.")) 0 else 1 }
-    }
+    private val codecSelector = DecoderTweaks.selector { preferSw }
 
     private var levelRefs: List<Pair<Tracks.Group, Int>> = emptyList()
     private var audioRefs: List<Tracks.Group> = emptyList()
@@ -195,7 +191,7 @@ class NativeVideo(
                 try {   // teşhis: hangi dekoder, hangi biçim/çözünürlük (sayfada kısa bildirim olarak görünür)
                     val f = player?.videoFormat
                     val d = (f?.sampleMimeType ?: "?").removePrefix("video/") + " " + (f?.width ?: 0) + "x" + (f?.height ?: 0) +
-                        " | " + (if (decName.isEmpty()) "?" else decName) + (if (preferSw) " [SW]" else " [HW]")
+                        " | " + (if (decName.isEmpty()) "?" else decName) + (if (preferSw || DecoderTweaks.isSwName(decName)) " [SW]" else " [HW]")
                     if (d != lastDiag) { lastDiag = d; send(JSONObject().put("t", "dbg").put("m", d)) }
                 } catch (_: Throwable) {}
             }
@@ -738,6 +734,12 @@ class NativeVideo(
         val p = player ?: return
         if (e.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {   // canlı yayında geride kaldı → canlıya dön
             p.seekToDefaultPosition(); p.prepare(); return
+        }
+        // Donanım dekoder çöktü/başlamadı (4000-4999): sayfaya hata (=logo + kanalı baştan yükle) göndermeden yazılım dekoderine geç
+        if (e.errorCode in 4000..4999 && !preferSw) {
+            send(JSONObject().put("t", "dbg").put("m", "Dekoder hatası (" + e.errorCodeName + "): yazılım dekoder"))
+            rebuildSoftware()
+            return
         }
         var hc0 = 0
         run { var c: Throwable? = e.cause; while (c != null) { if (c is HttpDataSource.InvalidResponseCodeException) { hc0 = c.responseCode; break }; c = c.cause } }
