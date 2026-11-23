@@ -306,9 +306,10 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             databaseEnabled = true
             mediaPlaybackRequiresUserGesture = false
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-            allowFileAccess = true
-            allowFileAccessFromFileURLs = true        // yayın/API isteklerinde CORS engeli olmasın
-            allowUniversalAccessFromFileURLs = true
+            allowFileAccess = true                    // yedek dosya gezgini akışı için bırakıldı (file: navigasyonu ayrıca engelli)
+            // Sayfa https'ten (bellekten) geliyor, file:// kökenli değil → CORS bu ayarlara bağlı değil. Kapalı tutulur.
+            allowFileAccessFromFileURLs = false
+            allowUniversalAccessFromFileURLs = false
             javaScriptCanOpenWindowsAutomatically = true
             useWideViewPort = true
             loadWithOverviewMode = true
@@ -325,13 +326,16 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         web.addJavascriptInterface(VideoBridge(), "UmitVideo")
         web.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(v: WebView, req: WebResourceRequest): Boolean {
+                // (Not: bu istemci onCreate sonunda remoteClient() ile değiştirilir; aynı kurallar orada da uygulanır.)
                 val u = req.url.toString()
+                val launchOk = launchAllowed(req)
                 return when {
-                    u.startsWith("http://action_exit") -> { finish(); true }       // sayfanın çıkış sinyali
-                    u.startsWith("intent:") -> { if (!tryBuiltinPlayer(u)) openIntent(u); true }             // harici oynatıcı (VLC/MX/Just Player)
-                    u.startsWith("http:") || u.startsWith("https:") || u.startsWith("file:") ||
+                    u.startsWith("http://action_exit") -> { if (pageTrusted()) finish(); true }       // sayfanın çıkış sinyali
+                    u.startsWith("intent:") -> { if (launchOk && !tryBuiltinPlayer(u)) openIntent(u); true }             // harici oynatıcı (VLC/MX/Just Player)
+                    u.startsWith("file:") -> true
+                    u.startsWith("http:") || u.startsWith("https:") ||
                         u.startsWith("blob:") || u.startsWith("data:") || u.startsWith("about:") -> false
-                    else -> { runCatching { startActivity(Intent(Intent.ACTION_VIEW, req.url)) }; true }
+                    else -> { if (launchOk) runCatching { startActivity(Intent(Intent.ACTION_VIEW, req.url)) }; true }
                 }
             }
         }
@@ -352,6 +356,8 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
             /** getUserMedia: mikrofon (sesli arama) ve kamera (kumanda QR tarama) istekleri */
             override fun onPermissionRequest(request: PermissionRequest) {
+                // Kamera/mikrofon yalnızca kendi sayfamıza (https + umitm0d.github.io); başka site/iframe reddedilir.
+                if (!permOriginOk(request)) { request.deny(); return }
                 val wantsAudio = request.resources.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)
                 val wantsVideo = request.resources.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
                 if (!wantsAudio && !wantsVideo) { request.deny(); return }
@@ -411,6 +417,26 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         web.requestFocus()
     }
 
+    // ───────── Güven sınırı yardımcıları ─────────
+    /** İzin (kamera/mikrofon) verilebilecek tek host: TRUSTED_PREFIX'in host'u (umitm0d.github.io). */
+    private val trustedHost: String by lazy { Uri.parse(TRUSTED_PREFIX).host ?: "" }
+
+    /** Şu an ekranda duran ana sayfa bize mi ait? (web.url üst çerçevenin adresidir.) */
+    private fun pageTrusted(): Boolean {
+        val u = web.url ?: return false
+        return u.startsWith(REMOTE_URL) || u.startsWith(TRUSTED_PREFIX)
+    }
+
+    /** İzni isteyen çerçevenin origin'i güvenilir host mu? (iframe'in origin'i de buraya yansır.) */
+    private fun permOriginOk(r: PermissionRequest): Boolean {
+        val o = r.origin ?: return false
+        return o.scheme == "https" && o.host == trustedHost && trustedHost.isNotEmpty()
+    }
+
+    /** intent:/özel şema başlatma: güvenilir sayfa serbest; üçüncü taraf sayfa ancak kullanıcı dokunuşuyla (tarayıcılardaki gibi). */
+    private fun launchAllowed(req: WebResourceRequest): Boolean =
+        pageTrusted() || (Build.VERSION.SDK_INT >= 24 && req.hasGesture())
+
     private fun newPageTask(): FutureTask<ByteArray?> {
         val app = applicationContext
         val sig = sigSha256()
@@ -439,12 +465,15 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         }
         override fun shouldOverrideUrlLoading(v: WebView, req: WebResourceRequest): Boolean {
             val u = req.url.toString()
+            val launchOk = launchAllowed(req)
             return when {
-                u.startsWith("http://action_exit") -> { finish(); true }
-                u.startsWith("intent:") -> { if (!tryBuiltinPlayer(u)) openIntent(u); true }
-                u.startsWith("http:") || u.startsWith("https:") || u.startsWith("file:") ||
+                u.startsWith("http://action_exit") -> { if (pageTrusted()) finish(); true }
+                u.startsWith("intent:") -> { if (launchOk && !tryBuiltinPlayer(u)) openIntent(u); true }
+                // Sayfa file:// açamaz (kayıtlar köprüden ExoPlayer'a gider); açılırsa dosya sistemi sızıntısı olur.
+                u.startsWith("file:") -> true
+                u.startsWith("http:") || u.startsWith("https:") ||
                     u.startsWith("blob:") || u.startsWith("data:") || u.startsWith("about:") -> false
-                else -> { runCatching { startActivity(Intent(Intent.ACTION_VIEW, req.url)) }; true }
+                else -> { if (launchOk) runCatching { startActivity(Intent(Intent.ACTION_VIEW, req.url)) }; true }
             }
         }
         override fun onPageFinished(v: WebView, url: String?) {
@@ -546,8 +575,14 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
         @JavascriptInterface
         fun load(url: String, ua: String, referer: String, startMs: Double, autoplay: Boolean, kind: String) = ui {
-            if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("file:///")) nv.load(url, ua, referer, startMs.toLong(), autoplay, kind)
+            if (url.startsWith("http://") || url.startsWith("https://") || (url.startsWith("file:///") && isRecFile(url))) nv.load(url, ua, referer, startMs.toLong(), autoplay, kind)
         }
+
+        /** file:/// yalnızca kayıt klasöründeki dosyalar için; köprüden rastgele yerel dosya açılamasın. */
+        private fun isRecFile(u: String): Boolean = try {
+            val p = Uri.parse(u).path ?: return false
+            java.io.File(p).canonicalPath.startsWith(recDir.canonicalPath + java.io.File.separator)
+        } catch (e: Exception) { false }
 
         // ── Canlı yayın kaydı (yerel): ExoPlayer'ın oynattığı adresi dosyaya indirir ──
         private val recDir by lazy { (getExternalFilesDir("kayitlar") ?: java.io.File(filesDir, "kayitlar")).also { it.mkdirs() } }
