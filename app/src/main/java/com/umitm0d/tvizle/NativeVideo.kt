@@ -127,6 +127,7 @@ class NativeVideo(
     private var readySince = 0L
     private var swTried = false
     private var hasVideoTrack = false
+    init { DecoderTweaks.demoteAllwinner = act.getSharedPreferences("umittv", android.content.Context.MODE_PRIVATE).getString("dec", "") == "demoteAw" }
     private val codecSelector = DecoderTweaks.selector { preferSw }
 
     private var levelRefs: List<Pair<Tracks.Group, Int>> = emptyList()

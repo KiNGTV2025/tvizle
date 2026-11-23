@@ -30,6 +30,10 @@ object DecoderTweaks {
     /** Allwinner OMX H.264/HEVC dekoderi bazı kutularda yeşil/mor (kroma hatalı) görüntü üretiyor; en sona itilir. */
     fun isBrokenHw(name: String): Boolean = name.startsWith("OMX.allwinner", ignoreCase = true)
 
+    /** Allwinner OMX'i en sona itmek ARTIK varsayılan değil (yazılım dekodere düşüp kasıyordu).
+     *  Yeşil/mor görüntü olan cihazda sayfadan "sw" seçilir ya da prefs "dec"="demoteAw" yazılır. */
+    @Volatile var demoteAllwinner: Boolean = false
+
     private fun isSw(i: MediaCodecInfo): Boolean =
         i.softwareOnly || i.name.startsWith("c2.android.") || i.name.startsWith("OMX.google.")
 
@@ -37,7 +41,7 @@ object DecoderTweaks {
     fun sortDecoders(list: List<MediaCodecInfo>, mime: String, preferSw: Boolean): List<MediaCodecInfo> {
         if (!mime.startsWith("video/")) return list
         return if (preferSw) list.sortedBy { i: MediaCodecInfo -> if (isSw(i)) 0 else 1 }
-        else list.sortedBy { i: MediaCodecInfo -> if (isBrokenHw(i.name)) 2 else if (isSw(i)) 1 else 0 }
+        else list.sortedBy { i: MediaCodecInfo -> if (demoteAllwinner && isBrokenHw(i.name)) 2 else if (isSw(i)) 1 else 0 }
     }
 
     fun selector(preferSw: () -> Boolean): MediaCodecSelector = MediaCodecSelector { mime, secure, tunneling ->
