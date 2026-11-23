@@ -6,6 +6,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.Gravity
 import android.view.SurfaceView
+import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
@@ -21,6 +22,8 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
@@ -55,6 +58,11 @@ class GridVideo(
         var gen = 0; var t0 = 0L; var lastErr = ""
         var src = ""; var rgen = 0; var vavooRetried = false
         var lastRect: DoubleArray? = null
+        // Görüntü gelmeme koruması (ana oynatıcıdaki gibi): ses çalıp kare çizilmezse yüzeyi yeniden bağla → TextureView → yazılım dekoder
+        var tex: TextureView? = null; var useTex = false; var forceTex = false
+        var preferSw = false
+        var frameShown = false; var hasVideo = false
+        var readySince = 0L; var frameFix = 0; var wgen = 0
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -67,9 +75,12 @@ class GridVideo(
         holder.clipChildren = true
         holder.visibility = View.INVISIBLE
         val surface = SurfaceView(act)
+        // Ana oynatıcının yüzeyinin ÜSTÜNDE (media overlay), WebView'in altında kalsın: aksi halde ana video katmanı kutuları örtüp "ses var, görüntü yok" yapıyordu
+        surface.setZOrderMediaOverlay(true)
         holder.addView(surface, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
-        root.addView(holder, 0, FrameLayout.LayoutParams(0, 0, Gravity.TOP or Gravity.START))
+        val at = root.indexOfChild(web).let { if (it < 0) 0 else it }
+        root.addView(holder, at, FrameLayout.LayoutParams(0, 0, Gravity.TOP or Gravity.START))
         val c = Cell(holder, surface)
         cells[i] = c
         return c
@@ -77,7 +88,12 @@ class GridVideo(
 
     private fun ensurePlayer(i: Int, c: Cell): ExoPlayer {
         c.player?.let { return it }
-        val renderers = DecoderTweaks.renderers(act).setEnableDecoderFallback(true)
+        val sel = MediaCodecSelector { mime, secure, tunneling ->
+            val list = MediaCodecSelector.DEFAULT.getDecoderInfos(mime, secure, tunneling)
+            if (!c.preferSw || !mime.startsWith("video/")) list
+            else list.sortedBy { d: MediaCodecInfo -> if (d.softwareOnly || d.name.startsWith("c2.android.") || d.name.startsWith("OMX.google.")) 0 else 1 }
+        }
+        val renderers = DecoderTweaks.renderers(act).setMediaCodecSelector(sel).setEnableDecoderFallback(true)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
         val lc = DefaultLoadControl.Builder().setBufferDurationsMs(8000, 20000, 1500, 3000).build()
         val p = ExoPlayer.Builder(act, renderers)
@@ -96,15 +112,22 @@ class GridVideo(
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_READY) {
                     c.everReady = true; c.retries = 0
-                    send(i, JSONObject().put("t", "ready"))
-                }
+                    // Logo ancak ilk kare çizilince kalkar (yoksa ses gelir, ekran boş kalır). Videosuz (sadece ses) akışta hemen hazır de.
+                    if (c.frameShown || !c.hasVideo) send(i, JSONObject().put("t", "ready"))
+                } else if (state != Player.STATE_BUFFERING) c.readySince = 0L
+            }
+            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                c.hasVideo = tracks.isTypeSelected(C.TRACK_TYPE_VIDEO)
             }
             override fun onRenderedFirstFrame() {
-                // ilk kare çizildi: STATE_READY hiç bildirilmediyse de sayfaya "hazır" de (logo kalksın)
+                c.frameShown = true
                 if (!c.everReady) { c.everReady = true; c.retries = 0 }
+                refresh(c)
                 send(i, JSONObject().put("t", "ready"))
             }
             override fun onVideoSizeChanged(vs: VideoSize) {
+                if (vs.height >= 2000) setTexture(c, true)        // 4K: SurfaceView/HW overlay yolu bozuk/boş çıkabiliyor → GPU yolu
+                else if (vs.height in 1..1500) setTexture(c, c.forceTex)
                 if (vs.height > 0) {
                     c.ratio = vs.width * vs.pixelWidthHeightRatio / vs.height
                     applyFit(c)
@@ -113,7 +136,8 @@ class GridVideo(
             }
             override fun onPlayerError(e: PlaybackException) = handleError(i, c, e)
         })
-        p.setVideoSurfaceView(c.surface)
+        val t = c.tex
+        if (c.useTex && t != null) p.setVideoTextureView(t) else p.setVideoSurfaceView(c.surface)
         p.volume = if (c.muted) 0f else 1f
         c.player = p
         return p
@@ -149,10 +173,12 @@ class GridVideo(
         c.src = url; c.vavooRetried = false
         c.kind = kind
         c.altTried = false; c.everReady = false; c.retries = 0; c.ratio = 0f
+        c.frameShown = false; c.hasVideo = false; c.readySince = 0L; c.frameFix = 0
         c.loaded = true
         p.stop()
         refresh(c)
         startDiag(i, c)
+        watchFrames(i, c)
         if (!VavooResolver.matches(url)) {
             startSource(c, url, ua, ref)
             return
@@ -192,7 +218,7 @@ class GridVideo(
 
     fun stop(i: Int) {
         val c = cells.getOrNull(i) ?: return
-        c.loaded = false; c.rgen++
+        c.loaded = false; c.rgen++; c.wgen++
         c.player?.let { it.stop(); it.clearMediaItems() }
         refresh(c)
     }
@@ -253,6 +279,7 @@ class GridVideo(
     fun onHostStart() {
         for (c in cells) {
             if (c != null && c.resumeOnStart) { c.player?.playWhenReady = true; c.resumeOnStart = false }
+            if (c != null) handler.postDelayed({ if (c.loaded && !c.frameShown) reattach(c) }, 400)   // ön plana dönüşte yüzey yeniden kurulmuş olabilir
         }
     }
     fun release() { stopAll() }
@@ -263,14 +290,15 @@ class GridVideo(
         // Sayfa kutuyu ancak 'ready' gelince göstermek ister (logo kalkınca show=true). Ama kutu INVISIBLE iken SurfaceView'in
         // yüzeyi oluşmaz; yeni Media3 (1.9+) yüzey olmadan hazır olmadığı için 'ready' hiç gelmez ve kutu sonsuza dek
         // "Açmaya çalışıyorum.." der. Bu yüzden ilk hazır oluşa kadar (yükleme sırasında) kutu görünür kalır; üstünü sayfadaki logo örter.
-        val visible = c.loaded && lp.width > 0 && lp.height > 0 && (c.showWanted || !c.everReady)
+        val visible = c.loaded && lp.width > 0 && lp.height > 0 && (c.showWanted || !c.frameShown)
         c.holder.visibility = if (visible) View.VISIBLE else View.INVISIBLE
     }
 
     private fun applyFit(c: Cell) {
         val lp = c.holder.layoutParams
         val w = lp.width; val h = lp.height
-        val sl = c.surface.layoutParams as FrameLayout.LayoutParams
+        val vv = vview(c)
+        val sl = vv.layoutParams as FrameLayout.LayoutParams
         var nw = ViewGroup.LayoutParams.MATCH_PARENT
         var nh = ViewGroup.LayoutParams.MATCH_PARENT
         if (c.ratio > 0f && w > 0 && h > 0) {   // contain: en-boy korunur, ortalanır
@@ -279,8 +307,82 @@ class GridVideo(
         }
         if (sl.width != nw || sl.height != nh) {
             sl.width = nw; sl.height = nh; sl.gravity = Gravity.CENTER
-            c.surface.layoutParams = sl
+            vv.layoutParams = sl
         }
+    }
+
+    private fun vview(c: Cell): View = if (c.useTex) (c.tex ?: c.surface) else c.surface
+
+    private fun setTexture(c: Cell, on: Boolean) {
+        if (on == c.useTex) return
+        val p = c.player ?: return
+        c.useTex = on
+        if (on) {
+            val t = c.tex ?: TextureView(act).also {
+                c.tex = it
+                c.holder.addView(it, FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
+            }
+            t.visibility = View.VISIBLE
+            c.surface.visibility = View.GONE
+            p.setVideoTextureView(t)
+        } else {
+            c.tex?.visibility = View.GONE
+            c.surface.visibility = View.VISIBLE
+            p.setVideoSurfaceView(c.surface)
+        }
+        applyFit(c)
+    }
+
+    private fun reattach(c: Cell) {
+        val p = c.player ?: return
+        try {
+            val t = c.tex
+            if (c.useTex && t != null) { p.clearVideoTextureView(t); p.setVideoTextureView(t) }
+            else { p.clearVideoSurfaceView(c.surface); p.setVideoSurfaceView(c.surface) }
+        } catch (_: Throwable) {}
+        c.holder.requestLayout()
+        refresh(c)
+        applyFit(c)
+    }
+
+    private fun rebuildSoftware(i: Int, c: Cell) {
+        val old = c.player ?: return
+        c.preferSw = true
+        c.player = null
+        old.release()
+        val p = ensurePlayer(i, c)
+        p.setMediaSource(buildSource(c, c.kind))
+        p.playWhenReady = true
+        p.prepare()
+    }
+
+    /** Ses çalıyor ama ilk kare çizilmiyorsa kademeli kurtarma: yüzeyi yeniden bağla (2,5 sn) → TextureView (3 sn) → yazılım dekoder (3,5 sn). */
+    private fun watchFrames(i: Int, c: Cell) {
+        val g = ++c.wgen
+        val r = object : Runnable {
+            override fun run() {
+                if (c.wgen != g || !c.loaded || c.frameShown) return
+                val p = c.player
+                if (p != null && c.hasVideo && p.playbackState == Player.STATE_READY && p.playWhenReady) {
+                    val now = SystemClock.elapsedRealtime()
+                    if (c.readySince == 0L) c.readySince = now
+                    else {
+                        val el = now - c.readySince
+                        when {
+                            c.frameFix == 0 && el > 2500 -> { c.frameFix = 1; c.readySince = now; reattach(c) }
+                            c.frameFix == 1 && el > 3000 -> {
+                                c.frameFix = 2; c.readySince = now
+                                if (!c.useTex) { c.forceTex = true; setTexture(c, true) } else reattach(c)
+                            }
+                            c.frameFix == 2 && el > 3500 -> { c.frameFix = 3; c.readySince = now; rebuildSoftware(i, c) }
+                        }
+                    }
+                } else c.readySince = 0L
+                handler.postDelayed(this, 500)
+            }
+        }
+        handler.postDelayed(r, 500)
     }
 
     private fun handleError(i: Int, c: Cell, e: PlaybackException) {
@@ -329,12 +431,12 @@ class GridVideo(
         c.lastErr = ""
         val r = object : Runnable {
             override fun run() {
-                if (c.gen != g || !c.loaded || c.everReady) return
+                if (c.gen != g || !c.loaded || c.frameShown) return
                 val sec = (SystemClock.elapsedRealtime() - c.t0) / 1000
                 val st = c.player?.let { stateName(it.playbackState) } ?: "yok"
                 val sf = if (c.surface.holder.surface.isValid) "var" else "YOK"
                 dbg(i, st + " · yüzey " + sf + " · " + sec + "s" + (if (c.lastErr.isNotEmpty()) " · " + c.lastErr else ""))
-                if (sec >= 20) { send(i, JSONObject().put("t", "er").put("c", -1).put("m", "zaman aşımı: $st yüzey $sf ${c.lastErr}")); return }
+                if (sec >= 30) { send(i, JSONObject().put("t", "er").put("c", -1).put("m", "zaman aşımı: $st yüzey $sf ${c.lastErr}")); return }
                 handler.postDelayed(this, 1000)
             }
         }
