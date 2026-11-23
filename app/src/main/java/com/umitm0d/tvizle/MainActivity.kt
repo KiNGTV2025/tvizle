@@ -47,6 +47,7 @@ import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -55,7 +56,10 @@ import android.widget.Toast
 import androidx.core.content.FileProvider
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
 import java.io.File
+import java.util.concurrent.FutureTask
+import java.util.concurrent.TimeUnit
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
@@ -108,6 +112,11 @@ open class MainActivity : Activity() {
          *  ek/alternatif imzalara da izin verebilirsiniz. Dosya yoksa/ağ hatasında uygulama normal açılır (kilitlenmez). */
         private val INTEGRITY_URL = deobf(
             "Mi8oLS1lT04XDg0RC1cMRw0CGAUbDV4YHVw1GRccGQsOVAkQFwv0993q6vHj4Prg/vKi5/3g/g==", OBF_KEY)
+        /** Şifreli sayfa blob'u (Pages'te düz HTML yok) ve anahtar adresi (Worker /pk). */
+        private val BLOB_URL = REMOTE_URL + ".dat"
+        private val KEY_URL = UPDATE_WORKER_URL + "/pk"
+        /** İstek imzası için gizli (CI secret'ı APP_HMAC_SECRET; kaynak kodda yok, APK'da XOR'lu). */
+        private val APP_SEC: String by lazy { if (BuildConfig.APP_SEC.isBlank()) "" else deobf(BuildConfig.APP_SEC, OBF_KEY) }
         private const val REQ_INSTALL_SRC = 4104
         /** true: sayfadaki "harici oynatıcı" butonu uygulamanın kendi ExoPlayer oynatıcısını açar. false: eski gibi sistem seçicisi. */
         private const val USE_BUILTIN_PLAYER = true
@@ -163,6 +172,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     }
 
     private lateinit var web: WebView
+    @Volatile private var pageTask: FutureTask<ByteArray?>? = null
     private lateinit var root: FrameLayout
     private lateinit var nv: NativeVideo
     private lateinit var gv: GridVideo
@@ -369,14 +379,39 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         setupMediaSession()
         askAudioOnce()
 
+        WebView.setWebContentsDebuggingEnabled(false)
+        pageTask = newPageTask()          // şifreli sayfayı arka planda indir+çöz; WebView isteği bellekten karşılanır
         web.webViewClient = remoteClient()
         web.loadUrl(REMOTE_URL)
         web.requestFocus()
     }
 
+    private fun newPageTask(): FutureTask<ByteArray?> {
+        val app = applicationContext
+        val sig = sigSha256()
+        return FutureTask<ByteArray?> { SecurePage.load(app, BLOB_URL, KEY_URL, APP_SEC, sig) }.also { Thread(it).start() }
+    }
+
+    /** REMOTE_URL (ana sayfa) isteğini ağa göndermeden, çözülmüş HTML ile bellekten yanıtlar. */
+    private fun servePage(): WebResourceResponse {
+        val t = pageTask ?: newPageTask()
+        pageTask = null
+        val bytes = try { t.get(30, TimeUnit.SECONDS) } catch (e: Exception) { null }
+        val hdr = mapOf("Cache-Control" to "no-store")
+        return if (bytes != null)
+            WebResourceResponse("text/html", "UTF-8", 200, "OK", hdr, ByteArrayInputStream(bytes))
+        else
+            WebResourceResponse("text/html", "UTF-8", 200, "OK", hdr, ByteArrayInputStream(OFFLINE_HTML.toByteArray(Charsets.UTF_8)))
+    }
+
     /** Sayfa yüklenemezse önce WebView önbelleğini, o da yoksa 'çevrimdışı' sayfasını gösteren istemci. */
     private fun remoteClient(): WebViewClient = object : WebViewClient() {
         private var phase = 0 // 0: normal, 1: önbellekten deniyor, 2: çevrimdışı sayfası açık
+        override fun shouldInterceptRequest(v: WebView, req: WebResourceRequest): WebResourceResponse? {
+            if (!req.isForMainFrame) return null
+            val clean = req.url.buildUpon().clearQuery().fragment(null).build().toString().trimEnd('/')
+            return if (clean == REMOTE_URL) servePage() else null
+        }
         override fun shouldOverrideUrlLoading(v: WebView, req: WebResourceRequest): Boolean {
             val u = req.url.toString()
             return when {

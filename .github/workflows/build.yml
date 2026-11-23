@@ -32,6 +32,7 @@ jobs:
         env:
           KEYSTORE_FILE: ${{ runner.temp }}/release.jks
           REL_READ_TOKEN: ${{ secrets.REL_READ_TOKEN }}
+          APP_HMAC_SECRET: ${{ secrets.APP_HMAC_SECRET }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: umitlauncher
           KEY_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}

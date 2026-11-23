@@ -33,6 +33,7 @@
         android:label="ÜmitTV"
         android:hardwareAccelerated="true"
         android:requestLegacyExternalStorage="true"
+        android:allowBackup="false"
         android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
         <meta-data android:name="com.google.android.gms.car.application" android:resource="@xml/automotive_app_desc"/>

@@ -19,6 +19,11 @@ android {
         val relEnc = Base64.getEncoder().encodeToString(
             ByteArray(relTok.length) { i -> (relTok[i].code xor ((0x5A + i) and 0xFF)).toByte() })
         buildConfigField("String", "REL_TOKEN", "\"$relEnc\"")
+        // Sayfa anahtarı isteğini imzalayan gizli (CI secret'ı APP_HMAC_SECRET; kaynakta yok, APK'da XOR'lu)
+        val appSec = System.getenv("APP_HMAC_SECRET") ?: ""
+        val appSecEnc = Base64.getEncoder().encodeToString(
+            ByteArray(appSec.length) { i -> (appSec[i].code xor ((0x5A + i) and 0xFF)).toByte() })
+        buildConfigField("String", "APP_SEC", "\"$appSecEnc\"")
     }
     buildFeatures { buildConfig = true }
     lint {
