@@ -57,7 +57,9 @@ class NativeVideo(
     companion object {
         private const val UA = "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
         private const val TICK_MS = 250L
-        private const val MAX_SILENT_RETRIES = 3
+        private const val MAX_SILENT_RETRIES = 6      // oynarken kopmada sayfaya hata gitmeden önce sessiz deneme sayısı
+        private const val MAX_RESOLVE_TRIES = 3       // Vavoo çözümü başarısızsa sayfaya hata vermeden önce deneme sayısı
+        private const val MAX_MID_RESOLVES = 3        // oynarken yeniden çözme hakkı (30 sn kararlı oynayınca yenilenir)
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -114,6 +116,8 @@ class NativeVideo(
     private var vavooRetried = false      // yayın hiç açılmazsa bir kez adresi yeniden çözdür
     private var vavooMidRetries = 0       // oynarken kopmada sessiz yeniden çözme sayısı (kararlı oynayınca sıfırlanır)
     private var readyStableAt = 0L
+    private var playedOk = false          // bu kanal (sayfanın load() çağrısı) için en az bir kez oynadı mı; yeniden çözmeler bunu SIFIRLAMAZ
+    private var resolveTries = 0          // art arda başarısız Vavoo çözüm sayısı
 
     // Görüntü gelmeme koruması: ses çalıp ilk video karesi çizilmezse (donanım dekoder sorunu) yazılım dekoderine geç
     private var preferSw = act.getSharedPreferences("umittv", android.content.Context.MODE_PRIVATE).getString("dec", "") == "sw"   // sw: yazılım dekoder öncelikli (kalıcı tercih ya da donanım hata verince otomatik)
@@ -151,7 +155,7 @@ class NativeVideo(
             .setEnableDecoderFallback(true)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
         val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(20000, 60000, 2500, 8000)   // IPTV: hızlı açılış (2,5 sn) ama takılmadan sonra 8 sn tamponla devam et
+            .setBufferDurationsMs(20000, 60000, 2500, 5000)   // IPTV: hızlı açılış (2,5 sn); takılmadan sonra 5 sn tamponla devam (8 sn, canlı kenar 10 sn gerideyken uzun donmaya yol açıyordu)
             .build()
         val p = ExoPlayer.Builder(act, renderers)
             .setLoadControl(loadControl)
@@ -161,7 +165,7 @@ class NativeVideo(
             .build()
         p.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
-                if (state == Player.STATE_READY) { everReady = true; retries = 0; if (readyStableAt == 0L) readyStableAt = android.os.SystemClock.elapsedRealtime() } else if (state != Player.STATE_BUFFERING) readyStableAt = 0L
+                if (state == Player.STATE_READY) { everReady = true; playedOk = true; retries = 0; resolveTries = 0; if (readyStableAt == 0L) readyStableAt = android.os.SystemClock.elapsedRealtime() } else if (state != Player.STATE_BUFFERING) readyStableAt = 0L
                 pushState()
             }
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) = pushState()
@@ -280,9 +284,13 @@ class NativeVideo(
         val policy = object : DefaultLoadErrorHandlingPolicy(8) {
             override fun getRetryDelayMsFor(info: androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo): Long {
                 val ex = info.exception
-                if (ex is HttpDataSource.InvalidResponseCodeException &&
-                    (ex.responseCode == 401 || ex.responseCode == 403 || ex.responseCode == 404 || ex.responseCode == 410)) {
-                    return if (info.errorCount <= 2) 800L else C.TIME_UNSET   // token bitti/parça yok: 2 deneme sonra vazgeç, yeniden çözdürülsün
+                if (ex is HttpDataSource.InvalidResponseCodeException) {
+                    when (ex.responseCode) {
+                        // canlıda parça/liste henüz yayınlanmamış ya da CDN düğümü gecikmiş olabilir: biraz daha sabret
+                        404, 410 -> return if (info.errorCount <= 5) 1000L else C.TIME_UNSET
+                        // token bitti: 2 deneme sonra vazgeç, yeniden çözdürülsün
+                        401, 403 -> return if (info.errorCount <= 2) 800L else C.TIME_UNSET
+                    }
                 }
                 return 1000L.coerceAtMost(500L * info.errorCount)
             }
@@ -301,13 +309,14 @@ class NativeVideo(
     // ───────────── Sayfadan gelen komutlar (hepsi ana iş parçacığında çağrılır) ─────────────
     fun load(url: String, ua: String, referer: String, startMs: Long, autoplay: Boolean, kind: String) {
         val gen = ++resolveGen
+        playedOk = false          // yeni kanal: her şey baştan (yeniden çözmeler bunu sıfırlamaz)
         if (!VavooResolver.matches(url)) {
             vavooSrc = ""
             loadResolved(url, ua, referer, startMs, autoplay, kind)
             return
         }
         vavooSrc = url
-        vavooRetried = false; vavooMidRetries = 0
+        vavooRetried = false; vavooMidRetries = 0; resolveTries = 0
         resolveVavoo(url, gen, startMs, autoplay, kind)
     }
 
@@ -321,8 +330,14 @@ class NativeVideo(
             handler.post {
                 if (gen != resolveGen) return@post          // bu arada başka kanal / durdur
                 if (r != null) {
+                    resolveTries = 0
                     loadResolved(r, VavooResolver.UA_APP, VavooResolver.REFERER, startMs, autoplay, kind)
+                } else if (++resolveTries < MAX_RESOLVE_TRIES) {
+                    // Vavoo imza/çözüm sunucusu geçici yanıt vermedi: sayfaya hata (=kanalı baştan yükle + logo) yerine kendimiz tekrar dene
+                    send(JSONObject().put("t", "dbg").put("m", "Vavoo çözülemedi, tekrar deneniyor ($resolveTries/$MAX_RESOLVE_TRIES)"))
+                    handler.postDelayed({ if (gen == resolveGen) resolveVavoo(src, gen, startMs, autoplay, kind) }, 1500L * resolveTries)
                 } else {
+                    resolveTries = 0
                     send(JSONObject().put("t", "er").put("cat", "net").put("c", 0).put("hc", 0)
                         .put("m", "VAVOO_RESOLVE"))
                 }
@@ -578,7 +593,7 @@ class NativeVideo(
             if (!loaded) return
             pushState()
             checkFirstFrame()
-            if (vavooMidRetries > 0 && readyStableAt != 0L && android.os.SystemClock.elapsedRealtime() - readyStableAt > 30000L) vavooMidRetries = 0
+            if ((vavooMidRetries > 0 || vavooRetried) && readyStableAt != 0L && android.os.SystemClock.elapsedRealtime() - readyStableAt > 30000L) { vavooMidRetries = 0; vavooRetried = false }
             handler.postDelayed(this, TICK_MS)
         }
     }
@@ -724,22 +739,39 @@ class NativeVideo(
         if (e.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {   // canlı yayında geride kaldı → canlıya dön
             p.seekToDefaultPosition(); p.prepare(); return
         }
-        if (vavooSrc.isNotEmpty() && !everReady && !vavooRetried) {   // Vavoo adresi bayatlamış olabilir: bir kez yeniden çözdür
+        var hc0 = 0
+        run { var c: Throwable? = e.cause; while (c != null) { if (c is HttpDataSource.InvalidResponseCodeException) { hc0 = c.responseCode; break }; c = c.cause } }
+        val diag = e.errorCodeName + (if (hc0 > 0) " HTTP $hc0" else "")
+        // NOT: eskiden burada everReady kullanılıyordu; yeniden çözme everReady'yi sıfırladığı için ikinci kopmada hata doğrudan sayfaya gidip
+        // kanal baştan yükleniyordu (logo ekranı). playedOk yalnızca sayfanın yeni load()'unda sıfırlanır.
+        if (playedOk) {
+            // 1) ilk kopma: aynı adresle hızlı yeniden dene (ağ dalgalanması çoğu zaman budur)
+            if (retries == 0) {
+                retries++
+                send(JSONObject().put("t", "dbg").put("m", "Yayın koptu ($diag): yeniden bağlanılıyor"))
+                handler.removeCallbacks(retryRun)
+                handler.postDelayed(retryRun, 800)
+                return
+            }
+            // 2) Vavoo: token/adres bayatlamış olabilir → sessizce yeniden çözdür
+            if (vavooSrc.isNotEmpty() && vavooMidRetries < MAX_MID_RESOLVES) {
+                vavooMidRetries++
+                send(JSONObject().put("t", "dbg").put("m", "Yayın koptu ($diag): Vavoo adresi yenileniyor ($vavooMidRetries/$MAX_MID_RESOLVES)"))
+                VavooResolver.invalidate(vavooSrc)
+                resolveVavoo(vavooSrc, ++resolveGen, 0L, true, lastKind)
+                return
+            }
+            // 3) kalan sessiz denemeler, giderek artan bekleme ile
+            if (retries < MAX_SILENT_RETRIES) {
+                retries++
+                handler.removeCallbacks(retryRun)
+                handler.postDelayed(retryRun, (1000L * retries).coerceAtMost(4000L))
+                return
+            }
+        } else if (vavooSrc.isNotEmpty() && !vavooRetried) {   // hiç açılmadı: adres bayatlamış olabilir, bir kez yeniden çözdür
             vavooRetried = true
             VavooResolver.invalidate(vavooSrc)
             resolveVavoo(vavooSrc, ++resolveGen, 0L, true, lastKind)
-            return
-        }
-        if (vavooSrc.isNotEmpty() && everReady && vavooMidRetries < 2) {   // oynarken koptu: token bitmiş olabilir → sessizce yeniden çözdür (sayfaya hata gitmez)
-            vavooMidRetries++
-            VavooResolver.invalidate(vavooSrc)
-            resolveVavoo(vavooSrc, ++resolveGen, 0L, true, lastKind)
-            return
-        }
-        if (everReady && retries < MAX_SILENT_RETRIES) {          // yayın oynarken koptu: sayfaya hata dönmeden yeniden dene
-            retries++
-            handler.removeCallbacks(retryRun)
-            handler.postDelayed(retryRun, 1500)
             return
         }
         val code = e.errorCode
