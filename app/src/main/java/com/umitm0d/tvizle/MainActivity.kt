@@ -415,6 +415,44 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         web.webViewClient = remoteClient()
         web.loadUrl(REMOTE_URL)
         web.requestFocus()
+        extractExternalQuery(intent)?.let { deliverExternalVoice(it) }
+    }
+
+    // ───────── Dış sesli komut (Gemini / Google Asistan / araç) ─────────
+    /** Asistan intent'inden kanal/komut metnini çıkarır: MEDIA_PLAY_FROM_SEARCH, SEARCH, umittv://play?q=... */
+    protected fun extractExternalQuery(i: Intent?): String? {
+        if (i == null) return null
+        val q: String? = when (i.action) {
+            "android.media.action.MEDIA_PLAY_FROM_SEARCH",
+            "com.google.android.gms.actions.SEARCH_ACTION",
+            Intent.ACTION_SEARCH -> i.getStringExtra(android.app.SearchManager.QUERY)
+            Intent.ACTION_VIEW -> i.data?.takeIf { it.scheme == "umittv" }
+                ?.let { it.getQueryParameter("q") ?: it.getQueryParameter("kanal") ?: it.lastPathSegment }
+            else -> null
+        }
+        return q?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    /** Metni TV İzle sayfasındaki window.umitExternalVoice(...) fonksiyonuna verir; sayfa henüz hazır değilse (soğuk açılış) ~30 sn boyunca yeniden dener. */
+    fun deliverExternalVoice(q: String) {
+        if (!::web.isInitialized) return
+        val quoted = org.json.JSONObject.quote(q)
+        var tries = 0
+        fun attempt() {
+            if (isFinishing || isDestroyed) return
+            web.evaluateJavascript(
+                "(function(){try{return window.umitExternalVoice?(umitExternalVoice($quoted)?1:2):0}catch(e){return 0}})()"
+            ) { r ->
+                if (r == "0" && ++tries < 40) uiHandler.postDelayed({ attempt() }, 750)
+            }
+        }
+        attempt()
+    }
+
+    override fun onNewIntent(i: Intent?) {
+        super.onNewIntent(i)
+        setIntent(i)
+        extractExternalQuery(i)?.let { deliverExternalVoice(it) }
     }
 
     // ───────── Güven sınırı yardımcıları ─────────
@@ -934,6 +972,11 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 override fun onSkipToPrevious() { zap(false) }
                 override fun onPlay() { playPause() }
                 override fun onPause() { playPause() }
+                // Gemini / Asistan: "ÜmitTV'de Show TV oynat" → kanal adı TV İzle'ye iletilir
+                override fun onPlayFromSearch(query: String?, extras: Bundle?) {
+                    val q = query?.trim().orEmpty()
+                    if (q.isNotEmpty()) (CarMainActivity.current ?: this@MainActivity).deliverExternalVoice(q)
+                }
             })
             s.setMetadata(
                 MediaMetadata.Builder()
@@ -944,7 +987,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             s.setPlaybackState(
                 PlaybackState.Builder()
                     .setActions(
-                        PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
+                        PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_FROM_SEARCH or
                             PlaybackState.ACTION_PLAY_PAUSE or
                             PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS
                     )

@@ -50,6 +50,12 @@
                 <action android:name="androidx.car.app.CarAppService"/>
                 <category android:name="androidx.car.app.category.NAVIGATION"/>
             </intent-filter>
+            <!-- Asistan "… git / navigasyon" dediğinde gelen geo: intent'i -->
+            <intent-filter>
+                <action android:name="androidx.car.app.action.NAVIGATE"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:scheme="geo"/>
+            </intent-filter>
         </service>
 
         <!-- Araç ekranındaki sanal ekranda açılan ÜmitTV arayüzü -->
@@ -72,6 +78,19 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>
+            </intent-filter>
+            <!-- Gemini / Google Asistan: "ÜmitTV'de Show TV oynat" -->
+            <intent-filter>
+                <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH"/>
+                <action android:name="com.google.android.gms.actions.SEARCH_ACTION"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+            </intent-filter>
+            <!-- Kısayol / rutin / Tasker: umittv://play?q=show tv -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="umittv" android:host="play"/>
             </intent-filter>
         </activity>
 
