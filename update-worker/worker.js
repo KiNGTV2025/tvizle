@@ -112,8 +112,20 @@ export default {
   async fetch(req, env) {
     const u = new URL(req.url);
     CORS = (env && env.ALLOWED_ORIGIN) || '*';
-    if (u.pathname === '/pk') return pageKey(env, u);
-    if (env.APP_KEY && u.searchParams.get('k') !== env.APP_KEY) return json({ error: 'yetkisiz' }, 403);
+    if (u.pathname === '/pk') {
+      // Ek Worker'lar secret tutmaz: PK_UPSTREAM (ana Worker adresi) tanımlıysa /pk ona iletilir.
+      if (env.PK_UPSTREAM) {
+        try {
+          const r = await fetch(String(env.PK_UPSTREAM).replace(/\/+$/, '') + '/pk' + u.search, { cf: { cacheTtl: 0 } });
+          return new Response(r.body, { status: r.status, headers: { 'content-type': 'text/plain', 'cache-control': 'no-store' } });
+        } catch (e) {
+          return new Response('yok', { status: 502, headers: { 'cache-control': 'no-store' } });
+        }
+      }
+      return pageKey(env, u);
+    }
+    // /epg anahtarsız kalır (uzak sayfa çekiyor, anahtar göndermiyor); /latest ve /apk APP_KEY ister.
+    if (env.APP_KEY && u.pathname !== '/epg' && u.searchParams.get('k') !== env.APP_KEY) return json({ error: 'yetkisiz' }, 403);
     try {
       if (u.pathname === '/epg') return await epg(u);
 

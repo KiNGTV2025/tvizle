@@ -27,7 +27,7 @@ import javax.crypto.spec.SecretKeySpec
 object SecurePage {
     private const val KS_ALIAS = "utv_pk_wrap"
 
-    fun load(ctx: Context, blobUrl: String, keyUrl: String, appSecret: String, certSha: String): ByteArray? {
+    fun load(ctx: Context, blobUrl: String, keyUrls: List<String>, appSecret: String, certSha: String): ByteArray? {
         val dir = ctx.filesDir
         val cacheBlob = File(dir, ".pg")
         // 1) ağdan taze blob; olmazsa önbellekteki şifreli kopya
@@ -35,7 +35,7 @@ object SecurePage {
         for ((blob, isFresh) in listOf(fresh to true, runCatching { cacheBlob.readBytes() }.getOrNull() to false)) {
             if (blob == null || blob.size < 4 + 16 + 12 + 16 || String(blob, 0, 4, Charsets.US_ASCII) != "UTV1") continue
             val buildId = blob.copyOfRange(4, 20)
-            val key = getKey(ctx, buildId, keyUrl, appSecret, certSha) ?: continue
+            val key = getKey(ctx, buildId, keyUrls, appSecret, certSha) ?: continue
             val html = runCatching { decrypt(blob, key) }.getOrNull() ?: continue
             if (isFresh) runCatching { cacheBlob.writeBytes(blob) }
             return html
@@ -44,7 +44,7 @@ object SecurePage {
     }
 
     // ───────────── anahtar ─────────────
-    private fun getKey(ctx: Context, buildId: ByteArray, keyUrl: String, secret: String, cert: String): ByteArray? {
+    private fun getKey(ctx: Context, buildId: ByteArray, keyUrls: List<String>, secret: String, cert: String): ByteArray? {
         val idHex = hex(buildId)
         val f = File(ctx.filesDir, ".pk_$idHex")
         // önbellekteki (Keystore ile sarılmış) anahtar
@@ -53,9 +53,14 @@ object SecurePage {
         val ts = (System.currentTimeMillis() / 1000).toString()
         val nonce = ByteArray(12).also { SecureRandom().nextBytes(it) }.let(::hex)
         val sig = hex(hmac(secret.toByteArray(Charsets.UTF_8), listOf(idHex, ts, nonce, cert).joinToString(".")))
-        val u = "$keyUrl?b=$idHex&t=$ts&n=$nonce&c=$cert&s=$sig"
-        val body = runCatching { String(download(u), Charsets.US_ASCII).trim() }.getOrNull() ?: return null
-        if (!Regex("^[0-9a-f]{64}$").matches(body)) return null
+        // Birden çok Worker: ilk geçerli cevabı veren kullanılır
+        var body: String? = null
+        for (keyUrl in keyUrls) {
+            val u = "$keyUrl?b=$idHex&t=$ts&n=$nonce&c=$cert&s=$sig"
+            val r = runCatching { String(download(u), Charsets.US_ASCII).trim() }.getOrNull()
+            if (r != null && Regex("^[0-9a-f]{64}$").matches(r)) { body = r; break }
+        }
+        if (body == null) return null
         val key = unhex(body)
         // eski build anahtarlarını temizle, yenisini sarıp sakla
         ctx.filesDir.listFiles { x -> x.name.startsWith(".pk_") }?.forEach { it.delete() }

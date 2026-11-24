@@ -113,13 +113,13 @@ open class MainActivity : Activity() {
         /** Güncelleme bilgisini buradan okur: {"versionCode":3,"versionName":"1.2","url":"https://.../UmitTV.apk","notes":"..."} */
         private val UPDATE_MANIFEST_URL = sdeobf("1Slcw75nbapZQYImNhOmyCwGqcKE7+HqNq578Kx4Eyg7la/u45CpTkwj29iqokvtsVeCKHEdZQ44sDdvUqZM9QeiHZDBZHoaOVnShFFYUPg=")
         private val TRUSTED_PREFIX = sdeobf("okekkDQySlNzMYzkDDpnseCTpOSwO91caKGc4hJTCKrCztm+1CRiM3SwQO/MhrnZQ2L4hHOU")
-        private const val UPDATE_CHECK_MIN_GAP_MS = 10L * 1000   // en az 10 sn arayla kontrol (Worker önbellekli, ucuz)
+        private const val UPDATE_CHECK_MIN_GAP_MS = 30L * 1000   // en az 30 sn arayla kontrol (Worker istek kotasını korumak için)
         /** Uygulama açıkken kaç sn'de bir yeni sürüme bakılır. */
-        private const val UPDATE_POLL_MS = 15L * 1000
+        private const val UPDATE_POLL_MS = 60L * 1000
         /** Cloudflare Worker adresi (worker.js). Örn: "https://umittv-update.KULLANICI.workers.dev". Boşsa doğrudan GitHub'a bakılır. */
         private val UPDATE_WORKER_URL = sdeobf("fdsmMrt5wooAjrK/yu4vbhpAHl05P3U8NHEsLr9KJ9DNo9qRgjV9JNaObXWKYt6VKxAst0cHJPqtoiuGxQ==")
         /** Worker'da APP_KEY secret'ı tanımlıysa buraya aynısını yaz; yoksa boş bırak. */
-        private const val UPDATE_WORKER_KEY = ""
+        private val UPDATE_WORKER_KEY = sdeobf("DoGl3C15eN6/yeaxYS1KwLhqi2RZgiCxBqe36H3NrJIuP829TrLIF3kG1bo3iaPV9XCKvtcj5Q6l5z80QE4FVAYJrK07atKG5DI7iA==")
         /** onCreate() içinde sigSha256() ile hesaplanıp buraya yazılır (bkz. aşağısı); APP_SEC
          *  bunu native'e göndererek açılır. Dex'teki mod-kontrolü smali'den silinse bile burası
          *  GERÇEK hesaplanan imzayı tutar, native tarafı yine de kendi karşılaştırmasını yapar. */
@@ -137,7 +137,19 @@ open class MainActivity : Activity() {
         private val INTEGRITY_URL = sdeobf("zE7oMOCAZWNukbeDTn80qebhywPewUFGlvaaJaL3UhtQFAzXLXRBjt7kumetfafExx6CCuyjleCrf+GeOp9WEw4UjsDiRTo3M3szuRFTFLKFIqw=")
         /** Şifreli sayfa blob'u (Pages'te düz HTML yok) ve anahtar adresi (Worker /pk). */
         private val BLOB_URL = REMOTE_URL + ".dat"
-        private val KEY_URL = UPDATE_WORKER_URL + "/pk"
+        /** Ek Worker adresleri (başka Cloudflare hesaplarındaki AYNI kod). Her biri sdeobf("...") ile eklenir;
+         *  şifreli metni tools/obf_url.py üretir. Boşsa yalnızca ana Worker kullanılır. */
+        private val EXTRA_WORKER_URLS: List<String> = listOf(
+            sdeobf("4EAGXdEB2EUAgIlaSICYEpOyPlQSq6XNouBQPG1djCNQiFxLaGZVb/scRm5GdmW9MxbrFoS+P4C1hhr7dg=="),   // https://gncel2.umittv.workers.dev
+            sdeobf("Dx9/Jt3QkexVczl321v7M7ubYgGcpGqjo5PN8OOl30lsi5uIpkdtduoecmF+orx/mot6eCbZ5HBvFUs8Jkw7VsioxklNQDg="),   // https://gncel3.umitmodpremiumtr.workers.dev
+            sdeobf("zl+ejeiOJ9gGZBfPkKF51mb7DpLPqYzHhofWe7r/pENVGZmtlqfLd4LSV0U015pc/eJAWLJZTU+YTB6te4c1nSg="),   // https://gncel4.sadecenjoy.workers.dev
+            sdeobf("wjIVtxrwDAYdE/UXF14Rd7l1KFuCbOFkCuid09bgAMVvZyy3DWdqn3cElrzX3LLH0Souhv05NzdKOVb7nQpBxMsfEFDZ"),   // https://gncel5.goldtowerumit1.workers.dev
+        )
+        /** Tüm Worker adresleri; her süreçte rastgele sıralanır (yük dağılır), hata olursa sıradakine geçilir. */
+        private val WORKER_URLS: List<String> by lazy {
+            (listOf(UPDATE_WORKER_URL) + EXTRA_WORKER_URLS).map { it.trim().trimEnd('/') }.filter { it.isNotEmpty() }.distinct().shuffled()
+        }
+        private val KEY_URLS: List<String> by lazy { WORKER_URLS.map { "$it/pk" } }
         /** İstek imzası için gizli (CI secret'ı APP_HMAC_SECRET; kaynak kodda yok, APK'da XOR'lu). */
         private val APP_SEC: String by lazy {
             if (BuildConfig.APP_SEC.isBlank()) "" else NativeGuard.unlockSecret(localSigCache, EXPECTED_SIG_SHA256, BuildConfig.APP_SEC, OBF_KEY)
@@ -496,7 +508,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     private fun newPageTask(): FutureTask<ByteArray?> {
         val app = applicationContext
         val sig = sigSha256()
-        return FutureTask<ByteArray?> { SecurePage.load(app, BLOB_URL, KEY_URL, APP_SEC, sig) }.also { Thread(it).start() }
+        return FutureTask<ByteArray?> { SecurePage.load(app, BLOB_URL, KEY_URLS, APP_SEC, sig) }.also { Thread(it).start() }
     }
 
     /** REMOTE_URL (ana sayfa) isteğini ağa göndermeden, çözülmüş HTML ile bellekten yanıtlar. */
@@ -1194,14 +1206,18 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 var src = "yok"; var wHttp = 0; var gHttp = 0
                 var sha = ""
                 // 0) Cloudflare Worker: anlık, tek istek, GitHub limiti/token gerektirmez
-                if (UPDATE_WORKER_URL.isNotBlank()) runCatching {
-                    val q = if (UPDATE_WORKER_KEY.isNotBlank()) "?k=" + UPDATE_WORKER_KEY else ""
-                    val j = JSONObject(httpGet(UPDATE_WORKER_URL.trimEnd('/') + "/latest" + q) ?: "")
-                    remoteCode = j.optInt("versionCode", -1)
-                    url = j.optString("url", "")
-                    vName = j.optString("versionName", ""); notes = j.optString("notes", ""); sizeB = j.optLong("size")
-                    sha = j.optString("sha256", "").trim().lowercase()
-                    if (remoteCode > 0) src = "Worker"
+                // Birden çok Worker varsa sırayla denenir (biri kota/hata verirse sıradakine geçilir).
+                for (w in WORKER_URLS) {
+                    runCatching {
+                        val q = if (UPDATE_WORKER_KEY.isNotBlank()) "?k=" + UPDATE_WORKER_KEY else ""
+                        val j = JSONObject(httpGet("$w/latest$q") ?: "")
+                        remoteCode = j.optInt("versionCode", -1)
+                        url = j.optString("url", "")
+                        vName = j.optString("versionName", ""); notes = j.optString("notes", ""); sizeB = j.optLong("size")
+                        sha = j.optString("sha256", "").trim().lowercase()
+                        if (remoteCode > 0) src = "Worker"
+                    }
+                    if (remoteCode > 0 && url.isNotBlank()) break
                 }
                 wHttp = lastHttp
                 // 1) GitHub Releases (Worker yoksa/çalışmazsa): etiket "v<versionCode>", ek dosya UmitTV.apk
@@ -1253,7 +1269,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         sb.append("Yerel sürüm: v").append(currentVersionName()).append(" (kod ").append(currentVersionCode()).append(")\n")
         sb.append("Sunucudaki sürüm: ").append(if (remote > 0) "v$rName (kod $remote)" else "alınamadı").append("\n")
         sb.append("Kaynak: ").append(src).append("\n")
-        sb.append("Worker HTTP: ").append(wHttp).append(if (UPDATE_WORKER_URL.isBlank()) " (Worker adresi tanımsız)" else "").append("\n")
+        sb.append("Worker HTTP: ").append(wHttp).append(if (WORKER_URLS.isEmpty()) " (Worker adresi tanımsız)" else "").append("\n")
         sb.append("GitHub HTTP: ").append(gHttp).append("\n")
         sb.append("APK adresi: ").append(if (hasApk) "var" else "yok").append("\n")
         sb.append("Bekletme: ").append(if (System.currentTimeMillis() < sp.getLong("upd_snooze_until", 0L)) "aktif (kod " + sp.getInt("upd_snooze_code", 0) + ")" else "yok").append("\n")

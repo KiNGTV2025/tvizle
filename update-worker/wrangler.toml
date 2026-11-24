@@ -13,3 +13,7 @@ ALLOWED_CERTS = "037CBDDC56CA5E12524AC22AD0E9C13A03F9551E8866832A6D96DBB0352C111
 # Şifreli sayfa anahtarı (/pk) için: APK imza SHA-256 (iki nokta yok, büyük harf). Birden fazlaysa virgülle.
 # Ek secret'lar:  npx wrangler secret put PAGE_MASTER_KEY   (GitHub'daki PAGE_MASTER_KEY ile AYNI)
 #                 npx wrangler secret put APP_HMAC_SECRET   (GitHub'daki APP_HMAC_SECRET ile AYNI)
+
+# EK WORKER (başka hesap): secret girmeden çalışsın diye /pk isteğini ana Worker'a ilet:
+#   npx wrangler deploy --name <yeni-ad> --var PK_UPSTREAM:https://gncel.umitm0d.workers.dev
+# Bu durumda PAGE_MASTER_KEY / APP_HMAC_SECRET / GH_TOKEN yeni Worker'da gerekmez.
