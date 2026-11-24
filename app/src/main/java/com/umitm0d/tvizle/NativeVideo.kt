@@ -435,8 +435,11 @@ class NativeVideo(
     private var gridSnapMuted = false
     private var gridSnapPlaying = false
     private var gridEndAt = 0L
+    /** Çoklu ekran açıkken ana video yüzeyi gizlenir: ana SurfaceView hücrelerin yüzeyini örtmesin. */
+    private var gridHide = false
     fun gridBegin() {
         if (gridSnapVol >= 0f) return
+        gridHide = true; holder.visibility = View.INVISIBLE
         gridSnapVol = volume
         gridSnapMuted = muted
         gridSnapPlaying = player?.playWhenReady == true
@@ -449,7 +452,11 @@ class NativeVideo(
         muted = false
         val restorePlaying = gridSnapPlaying || player?.isCurrentMediaItemLive == true
         gridSnapVol = -1f
+        gridHide = false; refreshVisibility()
         gridEndAt = android.os.SystemClock.elapsedRealtime()
+        // Çıkıştan sonra ses hattını tazele (video var/ses yok durumuna karşı): ses parçasını kısa süre kapat-aç, sesi yeniden uygula.
+        handler.postDelayed({ lastHeal = 0L; if (loaded) healAudio("çoklu ekrandan çıkış") }, 800)
+        handler.postDelayed({ player?.let { applyVolume(it) } }, 2000)
         player?.let { p ->
             applyVolume(p)
             if (restorePlaying && loaded) {
@@ -734,7 +741,7 @@ class NativeVideo(
 
     private fun refreshVisibility() {
         val lp = holder.layoutParams
-        holder.visibility = if ((loaded || freezeHold) && showWanted && lp.width > 0 && lp.height > 0) View.VISIBLE else View.INVISIBLE
+        holder.visibility = if (!gridHide && (loaded || freezeHold) && showWanted && lp.width > 0 && lp.height > 0) View.VISIBLE else View.INVISIBLE
     }
 
     /** Yerleşim: contain = en-boy korunur ve ortalanır; cover = kırparak doldurur; fill = uzatır. */
