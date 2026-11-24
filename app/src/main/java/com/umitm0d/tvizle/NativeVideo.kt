@@ -151,9 +151,7 @@ class NativeVideo(
             .setMediaCodecSelector(codecSelector)
             .setEnableDecoderFallback(true)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
-        val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(20000, 60000, 2500, 5000)   // IPTV: hızlı açılış (2,5 sn); takılmadan sonra 5 sn tamponla devam (8 sn, canlı kenar 10 sn gerideyken uzun donmaya yol açıyordu)
-            .build()
+        val loadControl = ExoConfig.loadControl()   // harici oynatıcıyla aynı tampon ayarı
         val p = ExoPlayer.Builder(act, renderers)
             .setLoadControl(loadControl)
             .setAudioAttributes(AudioAttributes.Builder()
@@ -259,18 +257,8 @@ class NativeVideo(
     }
 
     private fun buildSource(url: String, ua: String, referer: String, kind: String): androidx.media3.exoplayer.source.MediaSource {
-        val http = DefaultHttpDataSource.Factory()
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(8000)
-            .setReadTimeoutMs(10000)   // 20 sn'lik takılı bağlantı tamponu bitiriyordu; kısa kes, politika yeniden denesin
-            .setUserAgent(if (ua.isNotBlank()) ua else UA)
-        if (referer.isNotBlank()) http.setDefaultRequestProperties(mapOf("Referer" to referer))
-        // IPTV: bozuk/kesik TS akışlarını toleranslı çöz
-        val extractors = DefaultExtractorsFactory()
-            .setTsExtractorFlags(
-                DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or
-                    DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS)
-            .setConstantBitrateSeekingEnabled(true)
+        val http = ExoConfig.http(ua, referer)          // harici oynatıcıyla aynı bağlantı ayarı
+        val extractors = ExoConfig.extractors()
         val item = MediaItem.Builder().setUri(url)
         val low = url.lowercase()
         when {
@@ -278,7 +266,7 @@ class NativeVideo(
             low.contains(".mpd") -> item.setMimeType(MimeTypes.APPLICATION_MPD)
         }
         // Canlı yayında geçici parça/liste hatası oynatıcıyı düşürmesin: 8 deneme, 1 sn aralıkla (varsayılan 3 deneme, katlanarak artan bekleme)
-        val policy = object : DefaultLoadErrorHandlingPolicy(8) {
+        val policy = if (ExoConfig.MATCH_EXTERNAL) null else object : DefaultLoadErrorHandlingPolicy(8) {
             override fun getRetryDelayMsFor(info: androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo): Long {
                 val ex = info.exception
                 if (ex is HttpDataSource.InvalidResponseCodeException) {
@@ -292,15 +280,15 @@ class NativeVideo(
                 return 1000L.coerceAtMost(500L * info.errorCount)
             }
         }
-        if (low.contains(".m3u8") || kind == "hls") {
+        if (!ExoConfig.MATCH_EXTERNAL && (low.contains(".m3u8") || kind == "hls")) {
             // canlıda canlı kenardan biraz geride dur: Vavoo parçaları geç gelince tampon boşalıp kesilmesin
             item.setLiveConfiguration(MediaItem.LiveConfiguration.Builder()
                 .setTargetOffsetMs(10000).setMinOffsetMs(6000).setMaxOffsetMs(30000)
                 .setMinPlaybackSpeed(0.97f).setMaxPlaybackSpeed(1.03f).build())
         }
-        return DefaultMediaSourceFactory(DefaultDataSource.Factory(act, http), extractors)
-            .setLoadErrorHandlingPolicy(policy)
-            .createMediaSource(item.build())
+        val factory = DefaultMediaSourceFactory(DefaultDataSource.Factory(act, http), extractors)
+        if (policy != null) factory.setLoadErrorHandlingPolicy(policy)
+        return factory.createMediaSource(item.build())
     }
 
     // ───────────── Sayfadan gelen komutlar (hepsi ana iş parçacığında çağrılır) ─────────────

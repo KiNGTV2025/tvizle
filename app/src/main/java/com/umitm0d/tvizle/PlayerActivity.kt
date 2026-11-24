@@ -452,25 +452,13 @@ class PlayerActivity : Activity() {
 
     private fun beginPlayback(playUrl: String, ua: String, ref: String) {
         if (player != null) return
-        val http = DefaultHttpDataSource.Factory()
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(15000)
-            .setReadTimeoutMs(20000)
-            .setUserAgent(if (ua.isNotBlank()) ua else UA)
-        if (ref.isNotBlank()) http.setDefaultRequestProperties(mapOf("Referer" to ref))
+        val http = ExoConfig.http(ua, ref)
         val renderers = DecoderTweaks.renderers(this)
             .setMediaCodecSelector(DecoderTweaks.selector { false })
             .setEnableDecoderFallback(true)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
-        // IPTV için: bozuk/kesik TS akışlarını daha toleranslı çöz, hızlı kanal açılışı
-        val extractors = DefaultExtractorsFactory()
-            .setTsExtractorFlags(
-                DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or
-                    DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS)
-            .setConstantBitrateSeekingEnabled(true)
-        val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(15000, 50000, 2000, 4000)
-            .build()
+        val extractors = ExoConfig.extractors()
+        val loadControl = ExoConfig.loadControl()
         val p = ExoPlayer.Builder(this, renderers)
             .setLoadControl(loadControl)
             .setMediaSourceFactory(
