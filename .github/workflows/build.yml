@@ -17,6 +17,10 @@ jobs:
         with: { distribution: temurin, java-version: 17 }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: "8.13" }
+      - name: NDK + CMake kur (native/.so derlemesi için)
+        run: |
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.0.12077973" "cmake;3.22.1"
       - name: Sürümü version.txt'den oku (örn. 1.7 -> kod 17)
         id: ver
         run: |

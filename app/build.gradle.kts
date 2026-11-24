@@ -8,6 +8,7 @@ plugins {
 android {
     namespace = "com.umitm0d.tvizle"
     compileSdk = 36   // Media3 1.11.x ve güncel AndroidX bağımlılıkları için (targetSdk 30 aynen kalır)
+    ndkVersion = "27.0.12077973"   // CI'daki (build.yml) sdkmanager kurulumuyla AYNI sürüm olmalı
     defaultConfig {
         applicationId = "com.umitm0d.tvizle"
         minSdk = 23   // Media3 1.9+ minSdk 23 (Android 6.0) istiyor
@@ -24,6 +25,18 @@ android {
         val appSecEnc = Base64.getEncoder().encodeToString(
             ByteArray(appSec.length) { i -> (appSec[i].code xor ((0x5A + i) and 0xFF)).toByte() })
         buildConfigField("String", "APP_SEC", "\"$appSecEnc\"")
+        // Gizli anahtar çözme + imza doğrulama artık native (.so) tarafında (NativeGuard) —
+        // dex'teki kolay smali-patch yöntemlerine karşı. Yaygın cihazları kapsayan ABI'ler.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
+        externalNativeBuild {
+            cmake { cppFlags += "-std=c++17" }
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
     buildFeatures { buildConfig = true }
     lint {

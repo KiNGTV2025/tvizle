@@ -45,6 +45,13 @@
 -dontwarn javax.crypto.**
 -keep class com.umitm0d.tvizle.SecurePage { *; }
 
+# ── Native (.so) köprüsü — JNI, Kotlin "external fun" imzalarını metot adıyla
+#    bulur; isim karartılırsa UnsatisfiedLinkError ile çöker.
+-keep class com.umitm0d.tvizle.NativeGuard { *; }
+-keepclasseswithmembernames class * {
+    native <methods>;
+}
+
 # ── FileProvider (manifest'te adı geçiyor; AGP genelde otomatik korur ama
 #    garanti olsun).
 -keep class androidx.core.content.FileProvider

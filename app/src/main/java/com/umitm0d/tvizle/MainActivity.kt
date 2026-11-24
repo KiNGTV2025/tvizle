@@ -78,13 +78,8 @@ open class MainActivity : Activity() {
         private const val REQ_WEB_MEDIA = 4104
         /** true yapılırsa basılan her tuşun kodu ekranda gösterilir (direksiyon tuşu teşhisi için). */
         private const val SHOW_KEYCODES = false
-        /** APK içinde düz metin olarak görünmesin diye XOR+Base64 ile gizlenmiş adresler; açılımı deobf() yapar. */
-        private fun deobf(s: String, k: Int): String {
-            val raw = android.util.Base64.decode(s, android.util.Base64.NO_WRAP)
-            val out = ByteArray(raw.size)
-            for (i in raw.indices) out[i] = (raw[i].toInt() xor ((k + i) and 0xFF)).toByte()
-            return String(out, Charsets.UTF_8)
-        }
+        /** REL_TOKEN/APP_SEC'in XOR anahtarı — açılış artık NativeGuard.unlockSecret() (native/.so) içinde,
+         *  yalnızca imza doğrulandıktan sonra yapılıyor; bkz. NativeGuard.kt ve native-lib.cpp. */
         private const val OBF_KEY = 0x5A
 
         // ───── AES-256-GCM ile gizlenmiş sabitler: anahtar TEK PARÇA halinde hiçbir yerde yazılı değil.
@@ -125,7 +120,13 @@ open class MainActivity : Activity() {
         private val UPDATE_WORKER_URL = sdeobf("fdsmMrt5wooAjrK/yu4vbhpAHl05P3U8NHEsLr9KJ9DNo9qRgjV9JNaObXWKYt6VKxAst0cHJPqtoiuGxQ==")
         /** Worker'da APP_KEY secret'ı tanımlıysa buraya aynısını yaz; yoksa boş bırak. */
         private const val UPDATE_WORKER_KEY = ""
-        private val REL_TOKEN: String by lazy { if (BuildConfig.REL_TOKEN.isBlank()) "" else deobf(BuildConfig.REL_TOKEN, OBF_KEY) }
+        /** onCreate() içinde sigSha256() ile hesaplanıp buraya yazılır (bkz. aşağısı); REL_TOKEN/APP_SEC
+         *  bunu native'e göndererek açılır. Dex'teki mod-kontrolü smali'den silinse bile burası
+         *  GERÇEK hesaplanan imzayı tutar, native tarafı yine de kendi karşılaştırmasını yapar. */
+        private var localSigCache: String = ""
+        private val REL_TOKEN: String by lazy {
+            if (BuildConfig.REL_TOKEN.isBlank()) "" else NativeGuard.unlockSecret(localSigCache, EXPECTED_SIG_SHA256, BuildConfig.REL_TOKEN, OBF_KEY)
+        }
         private val GITHUB_LATEST_API = sdeobf("PM0+LaTe5yHrgOGbOlAZz+W4fueh3GKJSerrpJG5WCFhLMQOivLC6pXekDuXsJR2iOicxgmTFZH8nY8CCU+yuzYIuxIWD/OPF4uhZNo2yudhMS3is+g8aDgRf/XZZyjun2XU")
 
         // ───────── Modlamaya karşı koruma ─────────
@@ -141,7 +142,9 @@ open class MainActivity : Activity() {
         private val BLOB_URL = REMOTE_URL + ".dat"
         private val KEY_URL = UPDATE_WORKER_URL + "/pk"
         /** İstek imzası için gizli (CI secret'ı APP_HMAC_SECRET; kaynak kodda yok, APK'da XOR'lu). */
-        private val APP_SEC: String by lazy { if (BuildConfig.APP_SEC.isBlank()) "" else deobf(BuildConfig.APP_SEC, OBF_KEY) }
+        private val APP_SEC: String by lazy {
+            if (BuildConfig.APP_SEC.isBlank()) "" else NativeGuard.unlockSecret(localSigCache, EXPECTED_SIG_SHA256, BuildConfig.APP_SEC, OBF_KEY)
+        }
         private const val REQ_INSTALL_SRC = 4104
         /** true: sayfadaki "harici oynatıcı" butonu uygulamanın kendi ExoPlayer oynatıcısını açar. false: eski gibi sistem seçicisi. */
         private const val USE_BUILTIN_PLAYER = true
@@ -288,8 +291,12 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         // Modlamaya karşı 1. kat: yerel imza kontrolü (anında, ağ gerekmez). Uyuşmazsa hiçbir şey yüklenmeden çıkılır.
+        // Karşılaştırmanın kendisi artık native'de (NativeGuard.sigOk) — dex'teki bu "if" satırı
+        // silinse/atlatılsa bile localSigCache GERÇEK değeri taşır, REL_TOKEN/APP_SEC native'den
+        // yine de boş döner (bkz. NativeGuard.unlockSecret), yani uygulama işlevsiz kalır.
         val localSig = sigSha256()
-        if (localSig.isEmpty() || localSig != EXPECTED_SIG_SHA256) { showModBlockedScreen(); return }
+        localSigCache = localSig
+        if (localSig.isEmpty() || !NativeGuard.sigOk(localSig, EXPECTED_SIG_SHA256)) { showModBlockedScreen(); return }
         // Modlamaya karşı 2. kat: uzak kapatma anahtarı (arka planda; sonuç gelene kadar uygulama normal açılmaya devam eder).
         checkRemoteKillSwitch(localSig)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
