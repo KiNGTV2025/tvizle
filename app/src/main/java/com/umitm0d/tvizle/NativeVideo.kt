@@ -278,10 +278,11 @@ class NativeVideo(
         // Canlı yayında geçici parça/liste hatası oynatıcıyı düşürmesin: 8 deneme, 1 sn aralıkla (varsayılan 3 deneme, katlanarak artan bekleme)
         // (Eski satır-içi politika sonsuz yeniden denemeye yol açabiliyordu; ortak, sınırlı politika ExoConfig'de.)
         val policy = ExoConfig.loadErrorPolicy()
-        if (!ExoConfig.MATCH_EXTERNAL && (low.contains(".m3u8") || kind == "hls")) {
-            // canlıda canlı kenardan biraz geride dur: Vavoo parçaları geç gelince tampon boşalıp kesilmesin
+        if (low.contains(".m3u8") || kind == "hls") {
+            // Canlı kenara fazla yapışma: Vavoo/CDN parçası gecikince oynatıcı hemen tampon boşaltmasın.
+            // 15 sn hedef gecikme, ağ dalgalanmasında daha geniş toparlanma payı bırakır.
             item.setLiveConfiguration(MediaItem.LiveConfiguration.Builder()
-                .setTargetOffsetMs(10000).setMinOffsetMs(6000).setMaxOffsetMs(30000)
+                .setTargetOffsetMs(15000).setMinOffsetMs(8000).setMaxOffsetMs(45000)
                 .setMinPlaybackSpeed(0.97f).setMaxPlaybackSpeed(1.03f).build())
         }
         val factory = DefaultMediaSourceFactory(DefaultDataSource.Factory(act, http), extractors)
@@ -825,6 +826,16 @@ class NativeVideo(
         // NOT: eskiden burada everReady kullanılıyordu; yeniden çözme everReady'yi sıfırladığı için ikinci kopmada hata doğrudan sayfaya gidip
         // kanal baştan yükleniyordu (logo ekranı). playedOk yalnızca sayfanın yeni load()'unda sıfırlanır.
         if (playedOk) {
+            // Vavoo imzalı adresinde 401/403/410 geldiyse aynı bayat URL'yi tekrar deneme;
+            // önbelleği temizleyip gerçek yayın adresini yeniden çöz.
+            if (vavooSrc.isNotEmpty() && hc0 in setOf(401, 403, 410) &&
+                vavooMidRetries < MAX_MID_RESOLVES) {
+                vavooMidRetries++
+                send(JSONObject().put("t", "dbg").put("m", "Vavoo yayın adresi yenileniyor ($vavooMidRetries/$MAX_MID_RESOLVES)"))
+                VavooResolver.invalidate(vavooSrc)
+                resolveVavoo(vavooSrc, ++resolveGen, 0L, true, lastKind)
+                return
+            }
             // 1) ilk kopma: aynı adresle hızlı yeniden dene (ağ dalgalanması çoğu zaman budur)
             if (retries == 0) {
                 retries++

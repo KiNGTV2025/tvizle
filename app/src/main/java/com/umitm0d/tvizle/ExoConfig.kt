@@ -14,17 +14,15 @@ import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
  * Tek yerden yönetilir; iki oynatıcı da aynı bağlantı süresi, tampon ve TS çözme ayarını kullanır.
  */
 object ExoConfig {
-    /** true: ana oynatıcı harici oynatıcıyla birebir aynı davranır (varsayılan yeniden deneme politikası, canlı kenar ayarı yok).
-     *  false: NativeVideo'nun eski özel politikası (8 deneme, canlı kenar 10 sn) geri gelir. */
-    const val MATCH_EXTERNAL = true
+    /** Ana ve harici oynatıcılar için ortak HTTP, tampon ve canlı yayın hata toleransı ayarları. */
 
     const val DEFAULT_UA = "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 
     fun http(ua: String, referer: String): DefaultHttpDataSource.Factory {
         val f = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(8000)    // takılan bağlantı çabuk düşsün, yeniden deneme devreye girsin
-            .setReadTimeoutMs(10000)
+            .setConnectTimeoutMs(12000)   // kısa ağ dalgalanmalarında bağlantıyı erken kesme
+            .setReadTimeoutMs(20000)      // canlı HLS segmentlerinin geç gelmesine tolerans
             .setUserAgent(if (ua.isNotBlank()) ua else DEFAULT_UA)
         if (referer.isNotBlank()) f.setDefaultRequestProperties(mapOf("Referer" to referer))
         return f
@@ -41,9 +39,9 @@ object ExoConfig {
             if (ex is HttpDataSource.InvalidResponseCodeException) {
                 when (ex.responseCode) {
                     // parça henüz yayınlanmamış / CDN düğümü gecikmiş olabilir: biraz sabret
-                    404, 410 -> return if (info.errorCount <= 4) 1000L else C.TIME_UNSET
+                    404, 410 -> return if (info.errorCount <= 8) 1500L else C.TIME_UNSET
                     // token bitti: kısa dene, sonra vazgeç (üst katman adresi yeniden çözer)
-                    401, 403 -> return if (info.errorCount <= 2) 800L else C.TIME_UNSET
+                    401, 403 -> return if (info.errorCount <= 2) 1000L else C.TIME_UNSET
                 }
             }
             val d = super.getRetryDelayMsFor(info)
@@ -59,6 +57,6 @@ object ExoConfig {
         .setConstantBitrateSeekingEnabled(true)
 
     fun loadControl(): DefaultLoadControl = DefaultLoadControl.Builder()
-        .setBufferDurationsMs(15000, 50000, 2000, 4000)
+        .setBufferDurationsMs(25000, 75000, 5000, 12000)
         .build()
 }

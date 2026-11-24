@@ -68,6 +68,7 @@ class PlayerActivity : Activity() {
     private var videoRatio = 0f
     private var resolving = false          // Vavoo adresi çözülüyor mu
     private var vavooRetried = false
+    private var vavooRefreshes = 0
 
     private val modeNames = arrayOf("Sığdır", "Doldur (kırp)", "Uzat", "16:9", "4:3")
     private var mode = 0
@@ -495,7 +496,12 @@ class PlayerActivity : Activity() {
             .build()
         p.setVideoSurfaceView(surface)
         val item = MediaItem.Builder().setUri(playUrl)
-        if (playUrl.contains(".m3u8", ignoreCase = true)) item.setMimeType(MimeTypes.APPLICATION_M3U8)
+        if (playUrl.contains(".m3u8", ignoreCase = true)) {
+            item.setMimeType(MimeTypes.APPLICATION_M3U8)
+            item.setLiveConfiguration(MediaItem.LiveConfiguration.Builder()
+                .setTargetOffsetMs(15000).setMinOffsetMs(8000).setMaxOffsetMs(45000)
+                .setMinPlaybackSpeed(0.97f).setMaxPlaybackSpeed(1.03f).build())
+        }
         p.setMediaItem(item.build())
         p.playWhenReady = true
         p.prepare()
@@ -510,8 +516,20 @@ class PlayerActivity : Activity() {
     }
 
     private fun handleError(e: PlaybackException) {
-        if (!vavooRetried && VavooResolver.matches(url) && retries == 0 && player?.let { it.currentPosition <= 0L } != false) {
+        var httpCode = 0
+        var cause: Throwable? = e
+        while (cause != null) {
+            if (cause is androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) {
+                httpCode = cause.responseCode
+                break
+            }
+            cause = cause.cause
+        }
+        val expiredVavooUrl = VavooResolver.matches(url) && httpCode in setOf(401, 403, 410)
+        if (VavooResolver.matches(url) && vavooRefreshes < 3 &&
+            (expiredVavooUrl || !vavooRetried && retries == 0 && player?.let { it.currentPosition <= 0L } != false)) {
             vavooRetried = true
+            vavooRefreshes++
             VavooResolver.invalidate(url)
             releasePlayer()
             startPlayer()
