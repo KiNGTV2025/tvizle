@@ -73,6 +73,7 @@ open class MainActivity : Activity() {
     // PiP: sayfa düğmesi ve Android ana ekrana geçişi aynı yerel oynatıcıyı kullanır.
     @Volatile private var autoPipEnabled = true
     private var pipLayoutActive = false
+    @Volatile private var lastPipFailure: String = ""
 
 
     companion object {
@@ -697,27 +698,42 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 true
             } catch (e: Exception) { false }
         }
-        // Android WebView'de standart requestPictureInPicture() bulunmayabilir; yerel Activity API'si kullanılır.
+        // PiP doğrudan Android Activity üzerinden başlatılır. WebView JS köprüsü
+        // ayrı bir thread kullandığından UI thread sonucunu bekler ve hatayı saklar.
+        @Volatile private var pipLastError: String = ""
+
         @JavascriptInterface
-        fun pipSupported(): Boolean =
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-                packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+        fun pipSupported(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+
+        @JavascriptInterface
+        fun pipLastError(): String = if (lastPipFailure.isNotBlank()) lastPipFailure else pipLastError
 
         @JavascriptInterface
         fun enterPip(): Boolean {
-            // JS köprüsü ayrı bir iş parçacığında çalışır. Önceki sürüm UI'ya
-            // isteği kuyruğa koyup sonucu beklemeden true dönüyordu; PiP reddedilse
-            // bile sayfa başarı sanıyor, gerçek hata da kayboluyordu.
-            if (!pageTrusted() || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+            pipLastError = ""
+            lastPipFailure = ""
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+                pipLastError = "Android 8.0 veya üzeri gerekli"
+                return false
+            }
+            // Yalnızca uygulamanın ana sayfasına izin ver. URL sonundaki slash/query
+            // farklılıkları isTrustedUrl içinde host + HTTPS ile doğrulanır.
+            if (!pageTrusted()) {
+                pipLastError = "Güvenilir ÜmitTV sayfası algılanamadı: ${web.url ?: "URL yok"}"
+                return false
+            }
             return try {
                 if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
                     enterNativePip()
                 } else {
                     val task = FutureTask<Boolean> { enterNativePip() }
                     runOnUiThread(task)
-                    task.get(2500, TimeUnit.MILLISECONDS)
+                    task.get(5, TimeUnit.SECONDS)
                 }
-            } catch (_: Exception) { false }
+            } catch (e: Exception) {
+                pipLastError = "PiP isteği çalıştırılamadı: ${e.javaClass.simpleName} ${e.message ?: ""}".take(180)
+                false
+            }
         }
 
         @JavascriptInterface
@@ -1133,21 +1149,37 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     }
 
     private fun enterNativePip(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
-            !packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return false
-        // Çoklu ekranın eski hücreleri kalmışsa ana yayın için PiP'yi bloke etmesin.
-        // PiP tek ana oynatıcıyı taşır; grid'i temizleyip ana ses/yayın durumunu geri al.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return false
+        }
+        if (isFinishing || isDestroyed) return false
+        // Çoklu ekranın yüzeyleri ana video yüzeyinin önünde kalmasın.
         if (gv.hasActiveCells) {
             runCatching { gv.stopAll() }
             runCatching { nv.gridEnd() }
         }
-        if (!nv.hasMediaForPip) return false
+        // Kaynak henüz ExoPlayer'a bağlanmadıysa PiP penceresi boş kalır.
+        if (!nv.hasMediaForPip) {
+            lastPipFailure = "Ana oynatıcıda PiP'ye aktarılacak yayın bulunamadı"
+            return false
+        }
         return try {
-            val params = android.app.PictureInPictureParams.Builder()
-                .setAspectRatio(android.util.Rational(16, 9))
-                .build()
-            enterPictureInPictureMode(params)
-        } catch (_: Throwable) { false }
+            val ratio = nv.pipAspectRatio()
+            val builder = android.app.PictureInPictureParams.Builder()
+                .setAspectRatio(ratio)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                builder.setAutoEnterEnabled(false)
+            }
+            val accepted = enterPictureInPictureMode(builder.build())
+            if (!accepted) {
+                // Cihaz/ROM isteği reddetti; JS tarafında açıklayıcı hata göster.
+                lastPipFailure = "Android PiP isteğini reddetti. Ayarlar > Uygulamalar > ÜmitTV > Resim içinde resim iznini kontrol et."
+            }
+            accepted
+        } catch (e: Throwable) {
+            lastPipFailure = "Android PiP hatası: ${e.javaClass.simpleName} ${e.message ?: ""}".take(180)
+            false
+        }
     }
 
     @Suppress("DEPRECATION")

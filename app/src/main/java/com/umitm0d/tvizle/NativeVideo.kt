@@ -110,6 +110,11 @@ class NativeVideo(
     // PiP için yalnızca isPlaying'e bağlı kalma: canlı yayın tamponlarken
     // player BUFFERING durumunda olabilir ama video yüzeyi ve medya kaynağı hazırdır.
     val hasMediaForPip: Boolean get() = loaded && player != null && player?.playbackState != Player.STATE_IDLE
+    fun pipAspectRatio(): android.util.Rational {
+        val w = videoRatio.takeIf { it.isFinite() && it > 0f } ?: (16f / 9f)
+        val clamped = w.coerceIn(0.5f, 2.39f)
+        return android.util.Rational((clamped * 1000).toInt().coerceAtLeast(500), 1000)
+    }
 
     /** PiP sırasında çalışan video SurfaceView bağlantısını değiştirme.
      * Surface'i değiştirmek oynatıcıda ses devam ederken video çıkışını kaybettirebilir.
