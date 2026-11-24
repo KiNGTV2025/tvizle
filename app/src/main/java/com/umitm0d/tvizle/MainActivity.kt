@@ -669,6 +669,10 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         @JavascriptInterface fun volume(v: Double, muted: Boolean) = ui { nv.volume(v, muted) }
         @JavascriptInterface fun rate(r: Double) = ui { nv.rate(r) }
         @JavascriptInterface fun stop() = ui { nv.stop() }
+        // Donarak kanal geçişi ve ambient ışık (sayfa tarafı: umit-native-video betiği)
+        @JavascriptInterface fun freezeBegin() = ui { nv.freezeBegin() }
+        @JavascriptInterface fun freezeEnd(force: Boolean) = ui { nv.freezeEnd(force) }
+        @JavascriptInterface fun sample(w: Int, h: Int) = ui { nv.sample(w, h) }
         @JavascriptInterface fun retry() = ui { nv.retry() }
         /** Ekran yönü: "landscape" | "portrait" | "auto" (sayfadaki Döndür düğmesi). */
         @JavascriptInterface

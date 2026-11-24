@@ -1,7 +1,11 @@
 package com.umitm0d.tvizle
 
 import android.app.Activity
+import android.graphics.Bitmap
 import android.graphics.Color
+import android.os.Build
+import android.view.PixelCopy
+import android.widget.ImageView
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -66,6 +70,8 @@ class NativeVideo(
     private var player: ExoPlayer? = null
     private val holder = FrameLayout(act)
     private val surface = SurfaceView(act)
+    // Donarak kanal geçişi: önceki kanalın son karesi bu ImageView'de tutulur (SurfaceView'in ÜSTÜNDE, WebView'in ALTINDA)
+    private val freezeImg = ImageView(act).apply { scaleType = ImageView.ScaleType.FIT_CENTER; visibility = View.GONE }
     // 4K: SurfaceView/donanım overlay yolu bazı SoC'lerde (Allwinner) bozuk renk üretiyor; 4K'da GPU yolu (TextureView) kullanılır
     private var tex: TextureView? = null
     private var useTex = false
@@ -77,7 +83,7 @@ class NativeVideo(
         if (on) {
             val t = tex ?: TextureView(act).also {
                 tex = it
-                holder.addView(it, FrameLayout.LayoutParams(
+                holder.addView(it, holder.indexOfChild(freezeImg).coerceAtLeast(0), FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
             }
             t.visibility = View.VISIBLE
@@ -140,6 +146,8 @@ class NativeVideo(
         holder.visibility = View.INVISIBLE
         holder.addView(surface, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
+        holder.addView(freezeImg, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
         // WebView'in ALTINA (index 0): WebView saydam olduğu yerde video görünür
         root.addView(holder, 0, FrameLayout.LayoutParams(0, 0, Gravity.TOP or Gravity.START))
     }
@@ -186,6 +194,8 @@ class NativeVideo(
             }
             override fun onRenderedFirstFrame() {
                 firstFrame = true
+                newFrameSeen = true
+                if (freezeHold && freezeEndWanted) handler.postDelayed({ if (freezeEndWanted) freezeClear() }, 90)   // yeni kare göründü: donuk kareyi yumuşakça kaldır
                 send(JSONObject().put("t", "rf"))
                 try {   // teşhis: hangi dekoder, hangi biçim/çözünürlük (sayfada kısa bildirim olarak görünür)
                     val f = player?.videoFormat
@@ -294,6 +304,7 @@ class NativeVideo(
     // ───────────── Sayfadan gelen komutlar (hepsi ana iş parçacığında çağrılır) ─────────────
     fun load(url: String, ua: String, referer: String, startMs: Long, autoplay: Boolean, kind: String) {
         val gen = ++resolveGen
+        newFrameSeen = false      // bu yükleme için henüz kare çizilmedi (donuk kare bunu bekler)
         playedOk = false          // yeni kanal: her şey baştan (yeniden çözmeler bunu sıfırlamaz)
         if (!VavooResolver.matches(url)) {
             vavooSrc = ""
@@ -491,6 +502,8 @@ class NativeVideo(
         if (lp.leftMargin != nx || lp.topMargin != ny) { lp.leftMargin = nx; lp.topMargin = ny; holder.layoutParams = lp }
     }
     fun rect(x: Double, y: Double, w: Double, h: Double, iw: Double, ih: Double, show: Boolean, fit: String) {
+        // donuk kare gösterilirken (kanal geçişi) sayfanın "gizle" çağrısını yok say: son kare yerinde kalsın
+        if (freezeHold && (!show || w <= 2.0 || h <= 2.0)) return
         fitMode = fit
         showWanted = show
         lastRect = doubleArrayOf(x, y, w, h, iw, ih)
@@ -521,6 +534,94 @@ class NativeVideo(
 
     fun background(color: Int) { root.setBackgroundColor(color) }
 
+    // ───────────── Donarak kanal geçişi (eski hls.js oynatıcıdaki canvas karesinin yerine) ─────────────
+    // Sayfa kanal değiştirirken freezeBegin() çağırır: o anki kare bitmap olarak alınıp video alanında tutulur,
+    // stop()/yeni load() sırasında video alanı gizlenmez. Yeni yayının ilk karesi çizilince (ya da sayfa freezeEnd deyince) kaldırılır.
+    private var freezeHold = false
+    private var freezeEndWanted = false
+    private var newFrameSeen = true
+    private var freezeSeq = 0
+    private val freezeTimeout = Runnable { freezeClear() }
+
+    fun freezeBegin() {
+        if (freezeHold) {   // art arda geçiş: eldeki donuk kare kalsın, süreyi uzat
+            freezeEndWanted = false
+            handler.removeCallbacks(freezeTimeout); handler.postDelayed(freezeTimeout, 8000)
+            return
+        }
+        if (!loaded || !firstFrame || holder.visibility != View.VISIBLE) return
+        val v = vview
+        val w = v.width; val h = v.height
+        if (w <= 0 || h <= 0) return
+        freezeHold = true
+        freezeEndWanted = false
+        val seq = ++freezeSeq
+        handler.removeCallbacks(freezeTimeout); handler.postDelayed(freezeTimeout, 8000)
+        try {
+            val sc = Math.min(1f, 960f / Math.max(w, h))
+            val bmp = Bitmap.createBitmap(Math.max(2, (w * sc).toInt()), Math.max(2, (h * sc).toInt()), Bitmap.Config.ARGB_8888)
+            val t = tex
+            if (useTex && t != null) {
+                t.getBitmap(bmp)
+                showFreezeBitmap(bmp, seq)
+            } else if (Build.VERSION.SDK_INT >= 24) {
+                PixelCopy.request(surface, bmp, { res -> if (res == PixelCopy.SUCCESS) showFreezeBitmap(bmp, seq) }, handler)
+            }
+            // bitmap alınamazsa bile video alanı görünür kalır (yüzeyde son kare çoğu cihazda yerinde durur)
+        } catch (_: Throwable) {}
+    }
+
+    private fun showFreezeBitmap(bmp: Bitmap, seq: Int) {
+        if (!freezeHold || seq != freezeSeq) return
+        freezeImg.animate().cancel()
+        freezeImg.alpha = 1f
+        freezeImg.setImageBitmap(bmp)
+        freezeImg.visibility = View.VISIBLE
+    }
+
+    /** force: yeni yayın beklenmeden hemen bırak (sayfa artık ExoPlayer kullanmıyorsa). */
+    fun freezeEnd(force: Boolean) {
+        if (!freezeHold) return
+        if (force || newFrameSeen) freezeClear()
+        else {   // yeni yayının ilk karesini bekle; gelmezse kısa sürede bırak
+            freezeEndWanted = true
+            handler.removeCallbacks(freezeTimeout); handler.postDelayed(freezeTimeout, 2500)
+        }
+    }
+
+    private fun freezeClear() {
+        handler.removeCallbacks(freezeTimeout)
+        if (!freezeHold) return
+        freezeHold = false; freezeEndWanted = false
+        freezeSeq++
+        if (freezeImg.visibility == View.VISIBLE) {
+            freezeImg.animate().alpha(0f).setDuration(160).withEndAction {
+                if (!freezeHold) { freezeImg.visibility = View.GONE; freezeImg.setImageDrawable(null) }
+            }.start()
+        }
+        refreshVisibility()
+    }
+
+    // ───────────── Ambient ışık: görüntüden küçük örnek (eski sayfa <video>'dan canvas'a çiziyordu, ExoPlayer'da <video> boş) ─────────────
+    fun sample(w: Int, h: Int) {
+        if (!loaded || !firstFrame || w < 1 || h < 1 || w > 64 || h > 64 || holder.visibility != View.VISIBLE) return
+        try {
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val t = tex
+            if (useTex && t != null) { t.getBitmap(bmp); pushSample(bmp) }
+            else if (Build.VERSION.SDK_INT >= 24) PixelCopy.request(surface, bmp, { res -> if (res == PixelCopy.SUCCESS) pushSample(bmp) }, handler)
+        } catch (_: Throwable) {}
+    }
+
+    private fun pushSample(bmp: Bitmap) {
+        val w = bmp.width; val h = bmp.height
+        val px = IntArray(w * h)
+        bmp.getPixels(px, 0, w, 0, 0, w, h)
+        val a = JSONArray()
+        for (c in px) { a.put((c shr 16) and 255); a.put((c shr 8) and 255); a.put(c and 255) }
+        send(JSONObject().put("t", "amb").put("w", w).put("h", h).put("d", a))
+    }
+
     // ───────────── Yaşam döngüsü ─────────────
     fun onHostStop() {
         val p = player ?: return
@@ -544,7 +645,7 @@ class NativeVideo(
 
     private fun refreshVisibility() {
         val lp = holder.layoutParams
-        holder.visibility = if (loaded && showWanted && lp.width > 0 && lp.height > 0) View.VISIBLE else View.INVISIBLE
+        holder.visibility = if ((loaded || freezeHold) && showWanted && lp.width > 0 && lp.height > 0) View.VISIBLE else View.INVISIBLE
     }
 
     /** Yerleşim: contain = en-boy korunur ve ortalanır; cover = kırparak doldurur; fill = uzatır. */
