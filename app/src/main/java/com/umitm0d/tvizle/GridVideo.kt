@@ -67,6 +67,7 @@ class GridVideo(
 
     private val handler = Handler(Looper.getMainLooper())
     private val cells = arrayOfNulls<Cell>(MAX_CELLS)
+    val hasActiveCells: Boolean get() = cells.any { it?.loaded == true }
 
     private fun cell(i: Int): Cell? {
         if (i < 0 || i >= MAX_CELLS) return null

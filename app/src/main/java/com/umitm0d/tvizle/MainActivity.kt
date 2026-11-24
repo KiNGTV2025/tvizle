@@ -70,6 +70,10 @@ import javax.crypto.spec.SecretKeySpec
 /** ÜmitTV – REMOTE_URL'deki sayfayı tam ekran WebView'de açar (sayfa APK'nın içinde gömülü değil).
  *  v1.1: mikrofon (sesli komut), dosya ekleme, direksiyon tuşlarıyla kanal değiştirme. */
 open class MainActivity : Activity() {
+    // PiP: sayfa düğmesi ve Android ana ekrana geçişi aynı yerel oynatıcıyı kullanır.
+    @Volatile private var autoPipEnabled = true
+    private var pipLayoutActive = false
+
 
     companion object {
         private const val REQ_FILE = 4101
@@ -693,6 +697,25 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 true
             } catch (e: Exception) { false }
         }
+        // Android WebView'de standart requestPictureInPicture() bulunmayabilir; yerel Activity API'si kullanılır.
+        @JavascriptInterface
+        fun pipSupported(): Boolean =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+
+        @JavascriptInterface
+        fun enterPip(): Boolean {
+            if (!isTrustedUrl(web.url) || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+            runOnUiThread { enterNativePip() }
+            return true
+        }
+
+        @JavascriptInterface
+        fun setAutoPip(enabled: Boolean) {
+            if (!isTrustedUrl(web.url)) return
+            autoPipEnabled = enabled
+        }
+
         @JavascriptInterface fun play() = ui { nv.play() }
         @JavascriptInterface fun pause() = ui { nv.pause() }
         @JavascriptInterface fun seek(ms: Double) = ui { nv.seek(ms.toLong()) }
@@ -1099,6 +1122,42 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
     }
 
+    private fun enterNativePip(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+            !packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return false
+        if (!nv.isPlayingForPip || gv.hasActiveCells) return false
+        return try {
+            val params = android.app.PictureInPictureParams.Builder()
+                .setAspectRatio(android.util.Rational(16, 9))
+                .build()
+            enterPictureInPictureMode(params)
+        } catch (_: Throwable) { false }
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (autoPipEnabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nv.isPlayingForPip && !gv.hasActiveCells) {
+            enterNativePip()
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: android.content.res.Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        pipLayoutActive = isInPictureInPictureMode
+        if (isInPictureInPictureMode) {
+            web.visibility = View.INVISIBLE
+            nv.setPipMode(true)
+        } else {
+            nv.setPipMode(false)
+            web.visibility = View.VISIBLE
+            immersive()
+        }
+    }
+
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) immersive()
@@ -1122,7 +1181,9 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         mediaSession?.isActive = false           // arka plandayken müzik/navigasyon uygulamasının tuşlarını çalma
         if (btnReceiverOn) { runCatching { unregisterReceiver(mediaBtnReceiver) }; btnReceiverOn = false }
         destroyRecognizer()
-        nv.onHostStop(); gv.onHostStop()
+        if (!pipLayoutActive && !(Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode)) {
+            nv.onHostStop(); gv.onHostStop()
+        }
         web.onPause(); super.onPause()
     }
 

@@ -105,6 +105,18 @@ class NativeVideo(
     private var curUrl = ""
     /** Kayıt için: oynatıcının şu an kullandığı (çözülmüş) adres ve başlıkları. */
     fun recSource(): Array<String> = arrayOf(curUrl, lastUa, lastRef)
+    val isPlayingForPip: Boolean get() = loaded && (player?.isPlaying == true || player?.playWhenReady == true)
+
+    /** PiP penceresinde WebView gizlenirken video yüzeyini tüm pencereye genişletir. */
+    fun setPipMode(enabled: Boolean) {
+        if (enabled) {
+            holder.layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER)
+            holder.visibility = if (loaded) View.VISIBLE else View.GONE
+        } else {
+            reapply()
+        }
+    }
     private var fitMode = "contain"
     private var altTried = false
     private var lastUa = ""; private var lastRef = ""; private var lastKind = ""
