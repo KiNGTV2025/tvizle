@@ -46,6 +46,11 @@ android {
             if (System.getenv("KEYSTORE_FILE") != null) {
                 signingConfig = signingConfigs.getByName("release")
             }
+            // Dex'in MT Manager / jadx gibi araçlarla okunsa bile anlamsız kalması için:
+            // R8 ile kod küçültme + isim karartma (obfuscation) + kullanılmayan kaynakları silme.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
     compileOptions {
