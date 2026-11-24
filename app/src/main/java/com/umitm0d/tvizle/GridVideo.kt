@@ -76,10 +76,10 @@ class GridVideo(
         holder.clipChildren = true
         holder.visibility = View.INVISIBLE
         val surface = SurfaceView(act)
-        // Ana oynatıcıyla aynı SurfaceView/MediaOverlay yolunu kullan.
-        // TextureView zorla seçildiğinde bazı cihazlarda ses oynarken hiç video karesi
-        // görünmüyor. SurfaceView'i WebView'in üstünde medya katmanı olarak tut.
-        surface.setZOrderMediaOverlay(true)
+        // Ana oynatıcıyla aynı SurfaceView katman sırasını kullan.
+        // MediaOverlay, WebView'in saydam video penceresiyle çakışıp bazı cihazlarda
+        // yalnızca ses duyulmasına ve video yüzeyinin siyah kalmasına yol açabiliyor.
+        // Bu nedenle varsayılan SurfaceView sıralaması korunur.
         holder.addView(surface, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
         val at = root.indexOfChild(web).let { if (it < 0) 0 else it }

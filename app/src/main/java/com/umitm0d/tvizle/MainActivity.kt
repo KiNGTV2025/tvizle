@@ -1149,7 +1149,9 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         pipLayoutActive = isInPictureInPictureMode
         if (isInPictureInPictureMode) {
-            web.visibility = View.INVISIBLE
+            // INVISIBLE WebView'in SurfaceControl katmanı bazı cihazlarda PiP'de
+            // native SurfaceView'in üstünde siyah kalabiliyor. GONE katmanı kaldırır.
+            web.visibility = View.GONE
             nv.setPipMode(true)
         } else {
             nv.setPipMode(false)

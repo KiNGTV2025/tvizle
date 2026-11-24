@@ -114,6 +114,7 @@ class NativeVideo(
     fun setPipMode(enabled: Boolean) {
         if (enabled) {
             holder.visibility = if (loaded) View.VISIBLE else View.GONE
+            holder.bringToFront()
             holder.layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER)
             holder.post {
