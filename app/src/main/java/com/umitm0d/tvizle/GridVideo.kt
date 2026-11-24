@@ -158,6 +158,7 @@ class GridVideo(
             low.contains(".mpd") -> item.setMimeType(MimeTypes.APPLICATION_MPD)
         }
         return DefaultMediaSourceFactory(DefaultDataSource.Factory(act, http), extractors)
+            .setLoadErrorHandlingPolicy(ExoConfig.loadErrorPolicy())
             .createMediaSource(item.build())
     }
 

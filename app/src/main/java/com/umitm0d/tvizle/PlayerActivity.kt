@@ -462,7 +462,8 @@ class PlayerActivity : Activity() {
         val p = ExoPlayer.Builder(this, renderers)
             .setLoadControl(loadControl)
             .setMediaSourceFactory(
-                DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http), extractors))
+                DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http), extractors)
+                    .setLoadErrorHandlingPolicy(ExoConfig.loadErrorPolicy()))
             .build()
         p.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {

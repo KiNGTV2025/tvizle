@@ -276,20 +276,8 @@ class NativeVideo(
             low.contains(".mpd") -> item.setMimeType(MimeTypes.APPLICATION_MPD)
         }
         // Canlı yayında geçici parça/liste hatası oynatıcıyı düşürmesin: 8 deneme, 1 sn aralıkla (varsayılan 3 deneme, katlanarak artan bekleme)
-        val policy = if (ExoConfig.MATCH_EXTERNAL) null else object : DefaultLoadErrorHandlingPolicy(8) {
-            override fun getRetryDelayMsFor(info: androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo): Long {
-                val ex = info.exception
-                if (ex is HttpDataSource.InvalidResponseCodeException) {
-                    when (ex.responseCode) {
-                        // canlıda parça/liste henüz yayınlanmamış ya da CDN düğümü gecikmiş olabilir: biraz daha sabret
-                        404, 410 -> return if (info.errorCount <= 5) 1000L else C.TIME_UNSET
-                        // token bitti: 2 deneme sonra vazgeç, yeniden çözdürülsün
-                        401, 403 -> return if (info.errorCount <= 2) 800L else C.TIME_UNSET
-                    }
-                }
-                return 1000L.coerceAtMost(500L * info.errorCount)
-            }
-        }
+        // (Eski satır-içi politika sonsuz yeniden denemeye yol açabiliyordu; ortak, sınırlı politika ExoConfig'de.)
+        val policy = ExoConfig.loadErrorPolicy()
         if (!ExoConfig.MATCH_EXTERNAL && (low.contains(".m3u8") || kind == "hls")) {
             // canlıda canlı kenardan biraz geride dur: Vavoo parçaları geç gelince tampon boşalıp kesilmesin
             item.setLiveConfiguration(MediaItem.LiveConfiguration.Builder()
@@ -297,7 +285,7 @@ class NativeVideo(
                 .setMinPlaybackSpeed(0.97f).setMaxPlaybackSpeed(1.03f).build())
         }
         val factory = DefaultMediaSourceFactory(DefaultDataSource.Factory(act, http), extractors)
-        if (policy != null) factory.setLoadErrorHandlingPolicy(policy)
+        factory.setLoadErrorHandlingPolicy(policy)
         return factory.createMediaSource(item.build())
     }
 
