@@ -1,0 +1,9 @@
+ÇOKLU EKRAN – SURFACE CALLBACK DÜZELTMESİ
+
+- GridVideo her hücrenin SurfaceHolder.Callback olaylarını dinler.
+- surfaceCreated/surfaceChanged sonrasında o hücrenin SurfaceView'i ilgili ExoPlayer'a tekrar bağlanır.
+- gLoad ilk gRect ölçümünden önce gelirse holder görünür tutulur; gerçek ölçü rect() ile geldiğinde layout yenilenir.
+- Tanı satırı artık aktif çıkışı (Surface veya Texture) raporlar; TextureView kullanılırken SurfaceHolder geçersizliğini yanlış hata olarak göstermez.
+- HTML dosyası korunmuştur; çoklu ekran akışındaki JS mantığı değiştirilmemiştir.
+
+Not: Bu ortamda Gradle wrapper script/jar ve Android SDK bulunmadığından APK derlemesi yapılamadı. Cihaz testi gereklidir.

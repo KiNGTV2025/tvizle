@@ -484,14 +484,20 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     /** Şu an ekranda duran ana sayfa bize mi ait? (web.url üst çerçevenin adresidir.) */
     private fun pageTrusted(): Boolean = isTrustedUrl(web.url)
 
-    /** Yalnızca "startsWith" yetmez ("https://x.workers.dev.evil.com" de eşleşirdi): https + host birebir aynı olmalı. */
+    /** PiP ve izinler için adresi yol önekiyle değil, HTTPS + tam host eşleşmesiyle doğrula.
+     * WebView yönlendirme, son slash veya sorgu parametresi nedeniyle URL yolu değişebilir;
+     * startsWith(REMOTE_URL) bu geçerli sayfaları yanlışlıkla reddediyordu. Host birebir
+     * karşılaştırıldığı için benzer/aldatıcı alan adları yine kabul edilmez. */
     private fun isTrustedUrl(u: String?): Boolean {
-        if (u == null) return false
-        val ok = REMOTE_URL.isNotEmpty() && u.startsWith(REMOTE_URL) || TRUSTED_PREFIX.isNotEmpty() && u.startsWith(TRUSTED_PREFIX)
-        if (!ok) return false
+        if (u.isNullOrBlank()) return false
         val uri = runCatching { Uri.parse(u) }.getOrNull() ?: return false
-        val h = uri.host ?: return false
-        return uri.scheme == "https" && (h == Uri.parse(REMOTE_URL).host || h == Uri.parse(TRUSTED_PREFIX).host)
+        if (!uri.scheme.equals("https", ignoreCase = true)) return false
+        val host = uri.host?.lowercase() ?: return false
+        val allowedHosts = listOf(REMOTE_URL, TRUSTED_PREFIX)
+            .mapNotNull { raw -> runCatching { Uri.parse(raw).host?.lowercase() }.getOrNull() }
+            .filter { it.isNotBlank() }
+            .toSet()
+        return host in allowedHosts
     }
 
     /** Sayfadan gelen intent: yalnızca bilinen harici oynatıcı paketlerine (ya da paketsiz video açma) izin verilir. */

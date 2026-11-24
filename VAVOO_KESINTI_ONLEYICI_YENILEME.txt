@@ -1,0 +1,10 @@
+VAVOO YAYIN YENILEME DUZELTMESI
+
+- Ana yerel oynatici (NativeVideo) ve coklu ekran hucreleri (GridVideo) icin proaktif adres yenileme eklendi.
+- Vavoo kaynagi baslatildiktan 6 dakika sonra yeni yayin adresi arka planda cozulur.
+- Yeni adres gelirse mevcut canli yayin canli kenardan yeniden baslatilir; VOD ise mevcut oynatma konumu korunur.
+- Cozum sunucusu gecici hata verirse 30 saniye sonra tekrar denenir.
+- Kanal degistirilince / coklu ekran kapatilinca eski yenileme gorevleri iptal edilir.
+- Mevcut hata sonrasi yeniden baglanma mekanizmasi korunmustur.
+
+Not: Bu onleyici yenileme, gozlenen yaklasik 8 dakikalik sureden once (6. dakikada) calisir. Yeni URL'ye geciste oynatici kaynagi yeniden hazirlandigi icin cok kisa bir yeniden tamponlama olabilir; gercek cihazda test edilmeden sifir kesinti garantisi verilemez.
