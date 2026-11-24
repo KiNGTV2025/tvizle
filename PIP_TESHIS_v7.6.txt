@@ -1,0 +1,1 @@
+v7.6: PiP shim güven denetimi olmadan enjekte edilir; enterPip çağrılınca 'PiP isteği alındı' yerel Toast'u çıkar (köprünün çalıştığını doğrulamak için).

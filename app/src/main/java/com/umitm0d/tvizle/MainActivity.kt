@@ -570,12 +570,12 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         }
         override fun onPageFinished(v: WebView, url: String?) {
             super.onPageFinished(v, url)
-            if (isTrustedUrl(url)) v.evaluateJavascript(PIP_SHIM_JS, null)
+            v.evaluateJavascript(PIP_SHIM_JS, null)   // güven denetimi enterPip() içinde yapılır
             if (NATIVE_MAIN_PLAYER && url != null && url.startsWith(REMOTE_URL)) v.evaluateJavascript(HOOK_JS, null)
         }
         override fun onPageStarted(v: WebView, url: String?, favicon: android.graphics.Bitmap?) {
             super.onPageStarted(v, url, favicon)
-            if (isTrustedUrl(url)) v.evaluateJavascript(PIP_SHIM_JS, null)
+            v.evaluateJavascript(PIP_SHIM_JS, null)   // güven denetimi enterPip() içinde yapılır
             if (NATIVE_MAIN_PLAYER && url != null && url.startsWith(REMOTE_URL)) v.evaluateJavascript(HOOK_JS, null)
             // Çevrimdışı sayfasından "Tekrar dene"ye basıldı: normal moda dön
             if (phase == 2 && url == REMOTE_URL) {
@@ -733,6 +733,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         fun enterPip(): Boolean {
             pipLastError = ""
             lastPipFailure = ""
+            runCatching { runOnUiThread { android.widget.Toast.makeText(this@MainActivity, "PiP isteği alındı", android.widget.Toast.LENGTH_SHORT).show() } }
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
                 pipLastError = "Android 8.0 veya üzeri gerekli"
                 return false
