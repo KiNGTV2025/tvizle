@@ -21,8 +21,9 @@ object NativeGuard {
     /** localSigHex == expectedSigHex ise true. (Ek/ikinci katman; birincisi MainActivity'deki hızlı Kotlin kontrolü.) */
     external fun sigOk(localSigHex: String, expectedSigHex: String): Boolean
 
-    /** İmza uyuşmuyorsa (ya da native bir debugger tespit ettiyse) HER ZAMAN "" döner.
-     *  Uyuşuyorsa obfBase64'ü gradle'daki/Kotlin deobf() ile AYNI şemayla
+    /** İmza uyuşmuyorsa HER ZAMAN "" döner (antiDebugOk'a artık bağlı değil —
+     *  yanlış pozitifle gerçek kullanıcıyı kilitlememek için). Uyuşuyorsa
+     *  obfBase64'ü gradle'daki/Kotlin deobf() ile AYNI şemayla
      *  (byte xor ((key + i) & 0xFF)) çözüp döner. */
     external fun unlockSecret(localSigHex: String, expectedSigHex: String, obfBase64: String, key: Int): String
 
