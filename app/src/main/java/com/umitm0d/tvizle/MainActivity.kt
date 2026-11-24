@@ -803,6 +803,8 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         }
         @JavascriptInterface fun gStop(i: Int) = ui { gv.stop(i) }
         @JavascriptInterface fun gStopAll() = ui { gv.stopAll(); nv.gridEnd() }
+        /** Çoklu ekrandan çıkışta ana video yüzeyini tazele (sayfa __umitNvKick ile çağırır). */
+        @JavascriptInterface fun mainRecover() = ui { nv.recoverAfterGrid(true) }
         @JavascriptInterface fun gMute(i: Int, muted: Boolean) = ui { gv.mute(i, muted) }
         @JavascriptInterface
         fun gRect(i: Int, x: Double, y: Double, w: Double, h: Double, iw: Double, ih: Double, show: Boolean) =

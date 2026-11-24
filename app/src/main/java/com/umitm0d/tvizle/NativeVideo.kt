@@ -457,6 +457,10 @@ class NativeVideo(
         // Çıkıştan sonra ses hattını tazele (video var/ses yok durumuna karşı): ses parçasını kısa süre kapat-aç, sesi yeniden uygula.
         handler.postDelayed({ lastHeal = 0L; if (loaded) healAudio("çoklu ekrandan çıkış") }, 800)
         handler.postDelayed({ player?.let { applyVolume(it) } }, 2000)
+        // Ses var / görüntü yok: çıkışta ana video yüzeyi görünür kılınır, gerekirse yeniden bağlanır
+        handler.postDelayed({ recoverAfterGrid(false) }, 400)
+        handler.postDelayed({ recoverAfterGrid(true) }, 1500)
+        handler.postDelayed({ recoverAfterGrid(true) }, 3500)
         player?.let { p ->
             applyVolume(p)
             if (restorePlaying && loaded) {
@@ -464,6 +468,16 @@ class NativeVideo(
                 p.playWhenReady = true
             }
         }
+    }
+    /** Çoklu ekrandan çıkış sonrası ana video yüzeyini toparlar (ses geliyor ama kare görünmüyorsa). */
+    fun recoverAfterGrid(reattach: Boolean) {
+        if (gridSnapVol >= 0f || !loaded) return          // çoklu ekran yeniden açıldıysa dokunma
+        gridHide = false
+        val lr = lastRect
+        if (lr != null && lr[2] > 2.0 && lr[3] > 2.0) showWanted = true
+        refreshVisibility()
+        if (reattach && (!firstFrame || holder.visibility != View.VISIBLE)) reattachSurface()
+        else { holder.requestLayout(); applyFit() }
     }
     fun volume(v: Double, m: Boolean) {
         // Çoklu ekran açıkken WebView'in grid hücrelerinden gelen mute/volume
