@@ -413,21 +413,36 @@ class NativeVideo(
     } }
     fun pause() { player?.playWhenReady = false }
     fun seek(ms: Long) { player?.seekTo(ms.coerceAtLeast(0L)) }
-    // Çoklu ekran: sayfa grid sırasında ana oynatıcıyı sessize alıyor ve kapanışta geri açmayı atlıyordu (ses hiç gelmiyordu).
+    // Çoklu ekran açılırken ana oynatıcının ses ve oynatma durumunu sakla;
+    // kapanışta sayfanın eski mute olayları bu durumu ezmesin.
     private var gridSnapVol = -1f
+    private var gridSnapMuted = false
+    private var gridSnapPlaying = false
     private var gridEndAt = 0L
-    fun gridBegin() { if (gridSnapVol < 0f) gridSnapVol = volume }
+    fun gridBegin() {
+        if (gridSnapVol >= 0f) return
+        gridSnapVol = volume
+        gridSnapMuted = muted
+        gridSnapPlaying = player?.playWhenReady == true
+    }
     fun gridEnd() {
         if (gridSnapVol < 0f) return
-        volume = if (gridSnapVol > 0f) gridSnapVol else 1f
-        muted = false
+        volume = gridSnapVol.coerceIn(0f, 1f)
+        muted = gridSnapMuted
+        val restorePlaying = gridSnapPlaying
         gridSnapVol = -1f
         gridEndAt = android.os.SystemClock.elapsedRealtime()
-        player?.let { applyVolume(it) }
+        player?.let { p ->
+            applyVolume(p)
+            if (restorePlaying && loaded) {
+                if (p.playbackState == Player.STATE_IDLE || p.playbackState == Player.STATE_ENDED) p.prepare()
+                p.playWhenReady = true
+            }
+        }
     }
     fun volume(v: Double, m: Boolean) {
-        // grid kapandıktan hemen sonra gelen "sessize al" çağrısı (sayfanın eski durumu) yok sayılır
-        if (m && android.os.SystemClock.elapsedRealtime() - gridEndAt < 1500L) return
+        // Grid kapanışında WebView'den gecikmeli gelen eski mute durumu ana sesi kapatmasın.
+        if (m && android.os.SystemClock.elapsedRealtime() - gridEndAt < 2500L) return
         val was = muted
         volume = v.toFloat().coerceIn(0f, 1f); muted = m; player?.let { applyVolume(it) }
         if (m != was) {

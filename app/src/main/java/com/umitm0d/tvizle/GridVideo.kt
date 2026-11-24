@@ -198,6 +198,12 @@ class GridVideo(
     fun load(i: Int, url: String, ua: String, ref: String, kind: String) {
         val c = cell(i) ?: return
         val p = ensurePlayer(i, c)
+        // Çoklu ekran kutuları WebView'in saydam katmanlarıyla üst üste geldiği için
+        // SurfaceView bazı cihazlarda ses üretirken görüntüyü siyah bırakabiliyor.
+        // Her kutuda TextureView'i yayın başlamadan önce bağla; böylece çözünürlük
+        // değişimini beklemeden aynı composited view katmanında çizim yapılır.
+        c.forceTex = true
+        setTexture(c, true)
         val g = ++c.rgen
         c.src = url; c.vavooRetried = false
         c.refreshGen++
