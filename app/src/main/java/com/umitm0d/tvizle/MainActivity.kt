@@ -739,15 +739,19 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             }
             // Yalnızca uygulamanın ana sayfasına izin ver. URL sonundaki slash/query
             // farklılıkları isTrustedUrl içinde host + HTTPS ile doğrulanır.
-            if (!pageTrusted()) {
-                pipLastError = "Güvenilir ÜmitTV sayfası algılanamadı: ${web.url ?: "URL yok"}"
-                return false
+            // DİKKAT: WebView.getUrl() yalnızca UI thread'inde güvenli. JS köprüsü ayrı thread'de çalıştığından
+            // güven denetimi de PiP çağrısı da UI thread'inde yapılır (otomatik PiP yolu zaten orada çalışıyor).
+            val job = {
+                if (!pageTrusted()) {
+                    pipLastError = "Güvenilir ÜmitTV sayfası algılanamadı: ${web.url ?: "URL yok"}"
+                    false
+                } else enterNativePip()
             }
             val res = try {
                 if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
-                    enterNativePip()
+                    job()
                 } else {
-                    val task = FutureTask<Boolean> { enterNativePip() }
+                    val task = FutureTask<Boolean> { job() }
                     runOnUiThread(task)
                     task.get(5, TimeUnit.SECONDS)
                 }
@@ -763,8 +767,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
         @JavascriptInterface
         fun setAutoPip(enabled: Boolean) {
-            if (!isTrustedUrl(web.url)) return
-            autoPipEnabled = enabled
+            autoPipEnabled = enabled   // web.url UI thread dışında okunamaz; yalnızca bool bayrağı
         }
 
         @JavascriptInterface fun play() = ui { nv.play() }
