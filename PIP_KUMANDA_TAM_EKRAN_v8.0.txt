@@ -1,0 +1,1 @@
+v8.0: PiP'ten kumandayla tam ekrana dönüş: PiP'teyken OK/yön/menü/oynat tuşları uygulamayı tam ekran yapar; PiP menüsüne 'Tam ekran' RemoteAction eklendi.

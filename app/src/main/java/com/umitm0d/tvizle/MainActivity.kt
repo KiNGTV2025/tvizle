@@ -1042,7 +1042,29 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         )
     }
 
+    /** PiP penceresinden tam ekrana dön (kumanda / PiP menüsündeki "Tam ekran" eylemi). */
+    private fun expandFromPip() {
+        runCatching {
+            startActivity(Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+    }
+
+    private fun inPip(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode
+
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {
+        // PiP'teyken kumandanın OK/yön/menü/oynat tuşları tam ekrana döndürür (Android TV'de PiP'e odaklanılamıyor).
+        if (inPip()) {
+            when (e.keyCode) {
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER,
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT,
+                KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_INFO, KeyEvent.KEYCODE_GUIDE,
+                KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                    if (e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0) expandFromPip()
+                    return true
+                }
+            }
+        }
         if (SHOW_KEYCODES && e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0)
             toast("Tuş kodu: ${e.keyCode} (${KeyEvent.keyCodeToString(e.keyCode)})")
         // Güncelleme modalı açıkken kumanda onu yönetir (sol/sağ: düğmeler, geri: sonra / indirmeyi arkaya al)
@@ -1207,6 +1229,16 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             val ratio = nv.pipAspectRatio()
             val builder = android.app.PictureInPictureParams.Builder()
                 .setAspectRatio(ratio)
+            runCatching {
+                val pi = android.app.PendingIntent.getActivity(
+                    this, 7001,
+                    Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
+                val act = android.app.RemoteAction(
+                    android.graphics.drawable.Icon.createWithResource(this, android.R.drawable.ic_menu_zoom),
+                    "Tam ekran", "ÜmitTV'yi tam ekran yap", pi)
+                builder.setActions(listOf(act))
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 builder.setAutoEnterEnabled(false)
             }
