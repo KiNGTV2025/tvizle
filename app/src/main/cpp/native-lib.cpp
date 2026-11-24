@@ -18,11 +18,8 @@
 #include <cstring>
 #include <cstdint>
 
-#if defined(__ANDROID__)
-#include <sys/ptrace.h>
-#include <unistd.h>
-#include <errno.h>
-#endif
+#include <cstdio>
+#include <cstdlib>
 
 namespace {
 
@@ -79,38 +76,27 @@ bool constantTimeEq(const std::string& a, const std::string& b) {
     return diff == 0;
 }
 
-// Soft anti-debug: PTRACE_TRACEME kendine uygulanır; eğer süreç zaten bir
-// debugger tarafından izleniyorsa (ör. kurcalama amaçlı frida/gdb bağlanmışsa)
-// bu çağrı EPERM ile başarısız olur. Süreç başına yalnızca BİR kez çağrılabilir
-// (ikinci çağrı debugger olmasa da başarısız olur), bu yüzden sonucu statik
-// olarak önbelleğe alıyoruz. Desteklenmeyen/izin verilmeyen ortamlarda
-// (bazı SELinux politikaları, bazı cihazlar) YANLIŞ POZİTİFLE normal
-// kullanıcıyı kilitlememek için "emin değilsen engelleme" ilkesi uygulanır:
-// yalnızca AÇIKÇA "zaten izleniyor" (EPERM) durumunda false döner.
-bool antiDebugCheckOnce() {
-#if defined(__ANDROID__)
-    errno = 0;
-    long r = ptrace(PTRACE_TRACEME, 0, nullptr, nullptr);
-    if (r == -1 && errno == EPERM) {
-        return false; // zaten izleniyor → şüpheli
-    }
-    // NOT: başarılı TRACEME çağrısından sonra kasıtlı olarak DETACH YAPMIYORUZ.
-    // Hem (a) kendi sürecini izleyen bir child'ın kendi kendine DETACH etmesi
-    // tanımsız/anlamsızdır, hem de bu fonksiyon yalnızca BİR KEZ (aşağıdaki
-    // antiDebugOkCached() ile) çalıştırılır — tekrar TRACEME çağrılmaz, bu
-    // yüzden "zaten izleniyor" durumu sahte pozitif üretmez.
-    return true;
-#else
-    return true;
-#endif
-}
-
-// PTRACE_TRACEME aynı süreçte yalnızca BİR KEZ güvenle çağrılabilir (ikinci
-// çağrı, gerçek bir debugger olmasa bile EPERM döner). Bu yüzden sonucu
-// süreç ömrü boyunca tek seferlik hesaplayıp önbelleğe alıyoruz; sigOk,
-// unlockSecret ve antiDebugOk hepsi bu önbelleğe bakar.
+// Pasif debugger sinyali: /proc/self/status içindeki TracerPid'e bakar. Eskiden
+// ptrace(PTRACE_TRACEME) çağrılıyordu; bu süreci kalıcı olarak "izlenen" yapıp
+// bazı cihazlarda/SELinux politikalarında EPERM ile yanlış pozitif üretiyor,
+// crash raporlayıcıları ve sistem araçlarını da bozabiliyordu. Artık yalnızca
+// bilgi amaçlıdır; sigOk/unlockSecret ARTIK buna bağlı DEĞİL (gerçek kullanıcıyı
+// kilitlememek için). Hata durumunda "debugger yok" varsayılır.
 bool antiDebugOkCached() {
-    static const bool result = antiDebugCheckOnce();
+    static const bool result = [] {
+        FILE* f = fopen("/proc/self/status", "r");
+        if (!f) return true;
+        char line[256];
+        bool ok = true;
+        while (fgets(line, sizeof line, f)) {
+            if (strncmp(line, "TracerPid:", 10) == 0) {
+                ok = (atoi(line + 10) == 0);
+                break;
+            }
+        }
+        fclose(f);
+        return ok;
+    }();
     return result;
 }
 
@@ -124,7 +110,6 @@ extern "C" {
 JNIEXPORT jboolean JNICALL
 Java_com_umitm0d_tvizle_NativeGuard_sigOk(JNIEnv* env, jobject /*thiz*/,
                                            jstring localSigHex, jstring expectedSigHex) {
-    if (!antiDebugOkCached()) return JNI_FALSE;
     const char* lc = env->GetStringUTFChars(localSigHex, nullptr);
     const char* ex = env->GetStringUTFChars(expectedSigHex, nullptr);
     bool ok = lc && ex && constantTimeEq(std::string(lc), std::string(ex));
@@ -133,7 +118,7 @@ Java_com_umitm0d_tvizle_NativeGuard_sigOk(JNIEnv* env, jobject /*thiz*/,
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 
-// İmza eşleşmiyorsa (ya da debugger tespit edildiyse) HER ZAMAN "" döner —
+// İmza eşleşmiyorsa HER ZAMAN "" döner —
 // gradle'da XOR'lanmış REL_TOKEN/APP_SEC yalnızca burada, imza doğrulandıktan
 // SONRA çözülür. Böylece dex'teki kilidi atlatan bir mod kopyası bile
 // çalışan bir GitHub token'ı / HMAC anahtarı elde edemez.
@@ -141,7 +126,6 @@ JNIEXPORT jstring JNICALL
 Java_com_umitm0d_tvizle_NativeGuard_unlockSecret(JNIEnv* env, jobject /*thiz*/,
                                                   jstring localSigHex, jstring expectedSigHex,
                                                   jstring obfBase64, jint key) {
-    if (!antiDebugOkCached()) return env->NewStringUTF("");
     const char* lc = env->GetStringUTFChars(localSigHex, nullptr);
     const char* ex = env->GetStringUTFChars(expectedSigHex, nullptr);
     bool ok = lc && ex && constantTimeEq(std::string(lc), std::string(ex));

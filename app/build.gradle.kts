@@ -15,11 +15,6 @@ android {
         targetSdk = 30
         versionCode = (project.findProperty("vcode") as String?)?.toIntOrNull() ?: 6
         versionName = (project.findProperty("vname") as String?) ?: "1.5"
-        // Özel releases deposunu okumak için salt-okunur token (CI secret'ından; kaynak kodda yok, APK'da gizlenmiş)
-        val relTok = System.getenv("REL_READ_TOKEN") ?: ""
-        val relEnc = Base64.getEncoder().encodeToString(
-            ByteArray(relTok.length) { i -> (relTok[i].code xor ((0x5A + i) and 0xFF)).toByte() })
-        buildConfigField("String", "REL_TOKEN", "\"$relEnc\"")
         // Sayfa anahtarı isteğini imzalayan gizli (CI secret'ı APP_HMAC_SECRET; kaynakta yok, APK'da XOR'lu)
         val appSec = System.getenv("APP_HMAC_SECRET") ?: ""
         val appSecEnc = Base64.getEncoder().encodeToString(
@@ -76,6 +71,7 @@ kotlin {
     compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
 }
 dependencies {
+    testImplementation("junit:junit:4.13.2")
     // Android Auto (Car App Library)
     implementation("androidx.car.app:app:1.4.0")
     implementation("androidx.lifecycle:lifecycle-common:2.6.2")

@@ -21,21 +21,22 @@ jobs:
         run: |
           yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
           "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.0.12077973" "cmake;3.22.1"
-      - name: Sürümü version.txt'den oku (örn. 1.7 -> kod 17)
+      - name: Sürümü version.txt'den oku (örn. 1.7 -> kod 107, 5.10 -> 510)
         id: ver
         run: |
           VN=$(tr -d ' \r\n' < version.txt)
-          if ! [[ "$VN" =~ ^[0-9]+\.[0-9]$ ]]; then echo "version.txt biçimi hatalı: '$VN' (örnek: 1.7)"; exit 1; fi
-          V=$(( ${VN%.*} * 10 + ${VN#*.} ))
+          if ! [[ "$VN" =~ ^[0-9]+\.[0-9]{1,2}$ ]]; then echo "version.txt biçimi hatalı: '$VN' (örnek: 1.7 ya da 1.10)"; exit 1; fi
+          V=$(( ${VN%.*} * 100 + 10#${VN#*.} ))
           echo "vcode=$V" >> "$GITHUB_OUTPUT"
           echo "vname=$VN" >> "$GITHUB_OUTPUT"
+      - name: Birim testleri
+        run: gradle testReleaseUnitTest
       - name: Keystore'u hazırla
         run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
       - name: Derle ve imzala
         run: gradle assembleRelease -Pvcode=${{ steps.ver.outputs.vcode }} -Pvname=${{ steps.ver.outputs.vname }}
         env:
           KEYSTORE_FILE: ${{ runner.temp }}/release.jks
-          REL_READ_TOKEN: ${{ secrets.REL_READ_TOKEN }}
           APP_HMAC_SECRET: ${{ secrets.APP_HMAC_SECRET }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: umitlauncher

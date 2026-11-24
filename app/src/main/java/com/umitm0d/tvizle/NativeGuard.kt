@@ -26,7 +26,7 @@ object NativeGuard {
      *  (byte xor ((key + i) & 0xFF)) çözüp döner. */
     external fun unlockSecret(localSigHex: String, expectedSigHex: String, obfBase64: String, key: Int): String
 
-    /** Basit/yumuşak anti-debug sinyali (ptrace self-attach). Yanlış pozitif
+    /** Basit/yumuşak anti-debug sinyali (TracerPid, pasif). Yanlış pozitif
      *  riskine karşı yalnızca AÇIKÇA bir tracer varsa false döner. */
     external fun antiDebugOk(): Boolean
 }

@@ -46,13 +46,16 @@ async function pageKey(env, u) {
   return new Response(hex(key), { headers: { 'content-type': 'text/plain', 'cache-control': 'no-store' } });
 }
 
+// ALLOWED_ORIGIN (örn. https://umitm0d.github.io) tanımlıysa CORS yalnızca ona açılır; yoksa eski davranış (*).
+let CORS = '*';
+
 const json = (o, s = 200) =>
   new Response(JSON.stringify(o), {
     status: s,
     headers: {
       'content-type': 'application/json; charset=utf-8',
       'cache-control': 'no-store',
-      'access-control-allow-origin': '*',
+      'access-control-allow-origin': CORS,
     },
   });
 
@@ -71,7 +74,7 @@ async function epg(u) {
     headers: {
       'content-type': 'application/xml; charset=utf-8',
       'cache-control': 'public, max-age=' + EPG_TTL,
-      'access-control-allow-origin': '*',
+      'access-control-allow-origin': CORS,
     },
   });
 }
@@ -98,6 +101,8 @@ async function latestRelease(env) {
     versionName: j.name || j.tag_name,
     notes: j.body || '',
     size: a.size || 0,
+    // GitHub asset 'digest' alanı: "sha256:<hex>" (yoksa boş; istemci doğrulamayı atlar)
+    sha256: /^sha256:([0-9a-f]{64})$/i.test(a.digest || '') ? a.digest.slice(7).toLowerCase() : '',
     assetId: a.id,
     browserUrl: a.browser_download_url,
   };
@@ -106,6 +111,7 @@ async function latestRelease(env) {
 export default {
   async fetch(req, env) {
     const u = new URL(req.url);
+    CORS = (env && env.ALLOWED_ORIGIN) || '*';
     if (u.pathname === '/pk') return pageKey(env, u);
     if (env.APP_KEY && u.searchParams.get('k') !== env.APP_KEY) return json({ error: 'yetkisiz' }, 403);
     try {
@@ -119,6 +125,7 @@ export default {
           versionName: r.versionName,
           notes: r.notes,
           size: r.size,
+          sha256: r.sha256,
           url: u.origin + '/apk' + k,
         });
       }

@@ -78,7 +78,7 @@ open class MainActivity : Activity() {
         private const val REQ_WEB_MEDIA = 4104
         /** true yapılırsa basılan her tuşun kodu ekranda gösterilir (direksiyon tuşu teşhisi için). */
         private const val SHOW_KEYCODES = false
-        /** REL_TOKEN/APP_SEC'in XOR anahtarı — açılış artık NativeGuard.unlockSecret() (native/.so) içinde,
+        /** APP_SEC'in XOR anahtarı — açılış artık NativeGuard.unlockSecret() (native/.so) içinde,
          *  yalnızca imza doğrulandıktan sonra yapılıyor; bkz. NativeGuard.kt ve native-lib.cpp. */
         private const val OBF_KEY = 0x5A
 
@@ -120,13 +120,10 @@ open class MainActivity : Activity() {
         private val UPDATE_WORKER_URL = sdeobf("fdsmMrt5wooAjrK/yu4vbhpAHl05P3U8NHEsLr9KJ9DNo9qRgjV9JNaObXWKYt6VKxAst0cHJPqtoiuGxQ==")
         /** Worker'da APP_KEY secret'ı tanımlıysa buraya aynısını yaz; yoksa boş bırak. */
         private const val UPDATE_WORKER_KEY = ""
-        /** onCreate() içinde sigSha256() ile hesaplanıp buraya yazılır (bkz. aşağısı); REL_TOKEN/APP_SEC
+        /** onCreate() içinde sigSha256() ile hesaplanıp buraya yazılır (bkz. aşağısı); APP_SEC
          *  bunu native'e göndererek açılır. Dex'teki mod-kontrolü smali'den silinse bile burası
          *  GERÇEK hesaplanan imzayı tutar, native tarafı yine de kendi karşılaştırmasını yapar. */
         private var localSigCache: String = ""
-        private val REL_TOKEN: String by lazy {
-            if (BuildConfig.REL_TOKEN.isBlank()) "" else NativeGuard.unlockSecret(localSigCache, EXPECTED_SIG_SHA256, BuildConfig.REL_TOKEN, OBF_KEY)
-        }
         private val GITHUB_LATEST_API = sdeobf("PM0+LaTe5yHrgOGbOlAZz+W4fueh3GKJSerrpJG5WCFhLMQOivLC6pXekDuXsJR2iOicxgmTFZH8nY8CCU+yuzYIuxIWD/OPF4uhZNo2yudhMS3is+g8aDgRf/XZZyjun2XU")
 
         // ───────── Modlamaya karşı koruma ─────────
@@ -242,9 +239,9 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     } catch (e: Exception) { "" }
 
     /** Modlanmış/sahte kopya tespit edilince: hiçbir sayfa/köprü yüklenmeden boş ekranda uyarı gösterilir. */
-    private fun showModBlockedScreen() {
+    private fun showModBlockedScreen(msg: String = "Bu uygulama modlanmış olduğu için çalışmamaktadır.") {
         val tv = android.widget.TextView(this).apply {
-            text = "Bu uygulama modlanmış olduğu için çalışmamaktadır."
+            text = msg
             setTextColor(Color.WHITE)
             textSize = 18f
             gravity = Gravity.CENTER
@@ -279,7 +276,8 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                     if (arr != null) for (i in 0 until arr.length())
                         if (arr.optString(i, "").equals(localSig, ignoreCase = true)) { sigOk = true; break }
                 }
-                if (!enabled || !sigOk) runOnUiThread { showModBlockedScreen() }
+                if (!enabled) runOnUiThread { showModBlockedScreen("Bu sürüm geçici olarak devre dışı bırakıldı. Lütfen uygulamayı güncelleyin veya daha sonra tekrar deneyin.") }
+                else if (!sigOk) runOnUiThread { showModBlockedScreen() }
             } catch (e: Exception) {
                 // ağ yok / JSON bozuk / dosya yok: sessizce geç, uygulamayı kilitleme
             }
@@ -467,10 +465,23 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     private val trustedHost: String by lazy { Uri.parse(TRUSTED_PREFIX).host ?: "" }
 
     /** Şu an ekranda duran ana sayfa bize mi ait? (web.url üst çerçevenin adresidir.) */
-    private fun pageTrusted(): Boolean {
-        val u = web.url ?: return false
-        return u.startsWith(REMOTE_URL) || u.startsWith(TRUSTED_PREFIX)
+    private fun pageTrusted(): Boolean = isTrustedUrl(web.url)
+
+    /** Yalnızca "startsWith" yetmez ("https://x.workers.dev.evil.com" de eşleşirdi): https + host birebir aynı olmalı. */
+    private fun isTrustedUrl(u: String?): Boolean {
+        if (u == null) return false
+        val ok = REMOTE_URL.isNotEmpty() && u.startsWith(REMOTE_URL) || TRUSTED_PREFIX.isNotEmpty() && u.startsWith(TRUSTED_PREFIX)
+        if (!ok) return false
+        val uri = runCatching { Uri.parse(u) }.getOrNull() ?: return false
+        val h = uri.host ?: return false
+        return uri.scheme == "https" && (h == Uri.parse(REMOTE_URL).host || h == Uri.parse(TRUSTED_PREFIX).host)
     }
+
+    /** Sayfadan gelen intent: yalnızca bilinen harici oynatıcı paketlerine (ya da paketsiz video açma) izin verilir. */
+    private val EXTERNAL_PLAYER_PKGS = setOf(
+        "org.videolan.vlc", "com.mxtech.videoplayer.ad", "com.mxtech.videoplayer.pro",
+        "com.brouken.player", "is.xyz.mpv", "com.google.android.exoplayer2.demo"
+    )
 
     /** İzni isteyen çerçevenin origin'i güvenilir host mu? (iframe'in origin'i de buraya yansır.) */
     private fun permOriginOk(r: PermissionRequest): Boolean {
@@ -615,7 +626,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     /** Sayfadaki umit_native_video.js bunu window.UmitVideo olarak görür. Tüm çağrılar ana iş parçacığına alınır
      *  ve yalnızca REMOTE_URL sayfasından kabul edilir. */
     inner class VideoBridge {
-        private fun trusted(): Boolean { val u = web.url; return u != null && (u.startsWith(REMOTE_URL) || u.startsWith(TRUSTED_PREFIX)) }
+        private fun trusted(): Boolean = isTrustedUrl(web.url)
         private fun ui(f: () -> Unit) = runOnUiThread { if (trusted()) f() }
 
         @JavascriptInterface
@@ -632,7 +643,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         // ── Canlı yayın kaydı (yerel): ExoPlayer'ın oynattığı adresi dosyaya indirir ──
         private val recDir by lazy { (getExternalFilesDir("kayitlar") ?: java.io.File(filesDir, "kayitlar")).also { it.mkdirs() } }
         private val rec by lazy { Recorder(recDir) }
-        private fun recOk(): Boolean { val u = web.url; return u != null && (u.startsWith(REMOTE_URL) || u.startsWith(TRUSTED_PREFIX)) }
+        private fun recOk(): Boolean = isTrustedUrl(web.url)
         @JavascriptInterface fun recSupported(): Boolean = true
         /** Başladıysa dosya adı, değilse boş metin döner. */
         @JavascriptInterface
@@ -1039,6 +1050,12 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     private fun openIntent(url: String) {
         try {
             val i = Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
+            val pkg = i.getPackage()
+            val scheme = i.data?.scheme
+            val isVideo = (i.type ?: "").startsWith("video/") && (scheme == "http" || scheme == "https")
+            if (!isVideo || (pkg != null && pkg !in EXTERNAL_PLAYER_PKGS)) {
+                Toast.makeText(this, "Bu bağlantı açılamadı", Toast.LENGTH_SHORT).show(); return
+            }
             i.addCategory(Intent.CATEGORY_BROWSABLE)
             i.component = null
             i.selector = null
@@ -1134,7 +1151,6 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         val conn = (URL(u).openConnection() as HttpURLConnection).apply {
             connectTimeout = 8000; readTimeout = 8000; requestMethod = "GET"
             setRequestProperty("Accept", "application/vnd.github+json")
-            if (REL_TOKEN.isNotBlank() && u.startsWith("https://api.github.com/")) setRequestProperty("Authorization", "Bearer $REL_TOKEN")
         }
         return try {
             val rc = conn.responseCode; lastHttp = rc
@@ -1176,6 +1192,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 var url = ""
                 var vName = ""; var sizeB = 0L; var notes = ""
                 var src = "yok"; var wHttp = 0; var gHttp = 0
+                var sha = ""
                 // 0) Cloudflare Worker: anlık, tek istek, GitHub limiti/token gerektirmez
                 if (UPDATE_WORKER_URL.isNotBlank()) runCatching {
                     val q = if (UPDATE_WORKER_KEY.isNotBlank()) "?k=" + UPDATE_WORKER_KEY else ""
@@ -1183,13 +1200,14 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                     remoteCode = j.optInt("versionCode", -1)
                     url = j.optString("url", "")
                     vName = j.optString("versionName", ""); notes = j.optString("notes", ""); sizeB = j.optLong("size")
+                    sha = j.optString("sha256", "").trim().lowercase()
                     if (remoteCode > 0) src = "Worker"
                 }
                 wHttp = lastHttp
                 // 1) GitHub Releases (Worker yoksa/çalışmazsa): etiket "v<versionCode>", ek dosya UmitTV.apk
                 if (remoteCode <= 0 || url.isBlank()) runCatching {
                     val j = JSONObject(httpGet(GITHUB_LATEST_API) ?: "")
-                    remoteCode = Regex("\\d+").find(j.optString("tag_name", ""))?.value?.toIntOrNull() ?: -1
+                    remoteCode = UpdateUtil.codeFromTag(j.optString("tag_name", ""))
                     vName = j.optString("name", "").ifBlank { j.optString("tag_name", "") }
                     notes = j.optString("body", "")
                     val assets = j.optJSONArray("assets")
@@ -1208,7 +1226,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                     vName = j.optString("versionName", ""); notes = j.optString("notes", "")
                     src = "update.json"
                 }
-                updDbg("GitHub HTTP $ghHttp, uzak=$remoteCode, yerel=${currentVersionCode()}, apk=${if (url.isBlank()) "yok" else "var"}, token=${if (REL_TOKEN.isBlank()) "YOK" else "var"}")
+                updDbg("GitHub HTTP $ghHttp, uzak=$remoteCode, yerel=${currentVersionCode()}, apk=${if (url.isBlank()) "yok" else "var"}")
                 if (remoteCode <= currentVersionCode() || url.isBlank()) {
                     if (manual) showUpdDiag(
                         if (remoteCode <= 0 || url.isBlank()) "Kontrol edilemedi" else "Güncel sürümdesin",
@@ -1219,6 +1237,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 // "Sonra"/iptal bekletmesi yalnızca O sürüm için geçerli; daha yeni bir sürüm çıkınca hemen gösterilir
                 if (System.currentTimeMillis() < sp.getLong("upd_snooze_until", 0L) && remoteCode <= sp.getInt("upd_snooze_code", 0)) return@Thread
                 val code = remoteCode; val u = url; val n = vName; val sz = sizeB; val nt = notes
+                updExpectedSha = if (src == "Worker" && UpdateUtil.isValidSha256(sha)) sha else ""
                 runOnUiThread { if (!isFinishing) showUpdateBanner(u, n, sz, nt, code) }
             } catch (e: Exception) {
                 // otomatik kontrolde sessizce geç: ağ yok / JSON bozuk / sunucu yok
@@ -1730,6 +1749,15 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     }
 
     /** Özel depodaki APK: token ile asset adresine gidip kısa ömürlü imzalı indirme adresini alır, DownloadManager'a onu verir. */
+    /** Worker'ın bildirdiği APK SHA-256 (küçük harf hex); boşsa doğrulama atlanır (Android yine imza uyumunu denetler). */
+    @Volatile private var updExpectedSha: String = ""
+
+    private fun fileSha256(f: File): String = try {
+        val md = MessageDigest.getInstance("SHA-256")
+        f.inputStream().use { ins -> val buf = ByteArray(64 * 1024); while (true) { val n = ins.read(buf); if (n <= 0) break; md.update(buf, 0, n) } }
+        md.digest().joinToString("") { "%02x".format(it) }
+    } catch (e: Exception) { "" }
+
     private fun startApkDownload(apkUrl: String) {
         if (!apkUrl.startsWith("https://api.github.com/")) { enqueueApk(apkUrl); return }
         Thread {
@@ -1738,7 +1766,6 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 val c = (URL(apkUrl).openConnection() as HttpURLConnection).apply {
                     connectTimeout = 10000; readTimeout = 10000; instanceFollowRedirects = false
                     setRequestProperty("Accept", "application/octet-stream")
-                    if (REL_TOKEN.isNotBlank()) setRequestProperty("Authorization", "Bearer $REL_TOKEN")
                 }
                 if (c.responseCode in 300..399) signed = c.getHeaderField("Location")
                 c.disconnect()
@@ -1794,6 +1821,13 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                     stopUpdPoll()
                     if (status == DownloadManager.STATUS_SUCCESSFUL) {
                         val apk = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), pendingApkName)
+                        val want = updExpectedSha
+                        if (want.isNotEmpty() && fileSha256(apk) != want) {
+                            runCatching { apk.delete() }
+                            if (updHidden) { updHidden = false; ensureUpdBanner() }
+                            setUpdState(UPD_ERR, "İndirilen dosya doğrulanamadı (SHA-256), tekrar dene")
+                            return
+                        }
                         updReadyApk = apk
                         if (updHidden) { updHidden = false; ensureUpdBanner() }   // gizliydiyse bitince modalı geri getir
                         setUpdState(UPD_INSTALLING)
