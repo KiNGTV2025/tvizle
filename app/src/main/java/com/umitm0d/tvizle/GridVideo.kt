@@ -59,7 +59,7 @@ class GridVideo(
         var src = ""; var rgen = 0; var vavooRetried = false
         var lastRect: DoubleArray? = null
         // Görüntü gelmeme koruması (ana oynatıcıdaki gibi): ses çalıp kare çizilmezse yüzeyi yeniden bağla → TextureView → yazılım dekoder
-        var tex: TextureView? = null; var useTex = true; var forceTex = true
+        var tex: TextureView? = null; var useTex = false; var forceTex = false
         var preferSw = false
         var frameShown = false; var hasVideo = false
         var readySince = 0L; var frameFix = 0; var wgen = 0
@@ -76,19 +76,15 @@ class GridVideo(
         holder.clipChildren = true
         holder.visibility = View.INVISIBLE
         val surface = SurfaceView(act)
-        // Çoklu ekran kutularında SurfaceView kullanma: ayrı Surface katmanları WebView/ana video
-        // katmanıyla çakışıp bazı cihazlarda ses varken siyah görüntü üretebiliyor.
-        // TextureView normal View hiyerarşisinde çizildiği için her kutunun konumu ve kırpması
-        // WebView'in şeffaf video alanıyla aynı koordinat sisteminde kalır.
-        surface.visibility = View.GONE
-        val texture = TextureView(act)
+        // Ana oynatıcıyla aynı SurfaceView/MediaOverlay yolunu kullan.
+        // TextureView zorla seçildiğinde bazı cihazlarda ses oynarken hiç video karesi
+        // görünmüyor. SurfaceView'i WebView'in üstünde medya katmanı olarak tut.
+        surface.setZOrderMediaOverlay(true)
         holder.addView(surface, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
-        holder.addView(texture, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
         val at = root.indexOfChild(web).let { if (it < 0) 0 else it }
         root.addView(holder, at, FrameLayout.LayoutParams(0, 0, Gravity.TOP or Gravity.START))
-        val c = Cell(holder, surface).apply { tex = texture; useTex = true; forceTex = true }
+        val c = Cell(holder, surface)
         cells[i] = c
         return c
     }
@@ -130,7 +126,7 @@ class GridVideo(
             }
             override fun onVideoSizeChanged(vs: VideoSize) {
                 if (vs.height >= 2000) setTexture(c, true)        // 4K: SurfaceView/HW overlay yolu bozuk/boş çıkabiliyor → GPU yolu
-                else if (vs.height in 1..1500) setTexture(c, true)
+                else if (vs.height in 1..1500) setTexture(c, c.forceTex)
                 if (vs.height > 0) {
                     c.ratio = vs.width * vs.pixelWidthHeightRatio / vs.height
                     applyFit(c)
