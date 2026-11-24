@@ -165,6 +165,19 @@ open class MainActivity : Activity() {
         /** ESKİ yöntem: yayını ayrı bir ExoPlayer EKRANINDA açan kanca. Artık kapalı; ana motor sayfanın kendi video
          *  alanındaki ExoPlayer'dır (NativeVideo + sayfadaki umit_native_video.js köprüsü, bkz. VideoBridge). */
         private const val NATIVE_MAIN_PLAYER = false
+        /** Sayfa hangi sürüm olursa olsun (eski/önbellekteki dahil) WebView'in video.requestPictureInPicture()
+         *  çağrısı yerel Android PiP'ye yönlendirilir. Video ExoPlayer'da çizildiği için WebView PiP'si zaten çalışamaz. */
+        private val PIP_SHIM_JS = """(function(){
+var U=window.UmitVideo;if(!U||typeof U.enterPip!=='function')return;
+function go(){try{return !!U.enterPip();}catch(e){return false;}}
+function why(){var m='';try{m=U.pipLastError();}catch(e){}return m||'PiP başlatılamadı: yayın henüz hazır değil';}
+try{Object.defineProperty(document,'pictureInPictureEnabled',{configurable:true,get:function(){return true;}});}catch(e){}
+try{HTMLVideoElement.prototype.requestPictureInPicture=function(){
+  if(go())return Promise.resolve({});
+  var m=why();try{if(typeof toast==='function')toast(m,'warn');}catch(e){}
+  return Promise.reject(new DOMException(m,'NotAllowedError'));};}catch(e){}
+try{Object.defineProperty(HTMLVideoElement.prototype,'disablePictureInPicture',{configurable:true,get:function(){return false;},set:function(){}});}catch(e){}
+})();"""
         private val HOOK_JS = """(function(){
 if(window.__umitHook)return;window.__umitHook=1;
 var lastU='',lastT=0;
@@ -557,10 +570,12 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         }
         override fun onPageFinished(v: WebView, url: String?) {
             super.onPageFinished(v, url)
+            if (isTrustedUrl(url)) v.evaluateJavascript(PIP_SHIM_JS, null)
             if (NATIVE_MAIN_PLAYER && url != null && url.startsWith(REMOTE_URL)) v.evaluateJavascript(HOOK_JS, null)
         }
         override fun onPageStarted(v: WebView, url: String?, favicon: android.graphics.Bitmap?) {
             super.onPageStarted(v, url, favicon)
+            if (isTrustedUrl(url)) v.evaluateJavascript(PIP_SHIM_JS, null)
             if (NATIVE_MAIN_PLAYER && url != null && url.startsWith(REMOTE_URL)) v.evaluateJavascript(HOOK_JS, null)
             // Çevrimdışı sayfasından "Tekrar dene"ye basıldı: normal moda dön
             if (phase == 2 && url == REMOTE_URL) {
