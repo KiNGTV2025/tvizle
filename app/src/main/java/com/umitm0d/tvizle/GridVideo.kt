@@ -65,6 +65,8 @@ class GridVideo(
         var preferSw = false
         var frameShown = false; var hasVideo = false
         var readySince = 0L; var frameFix = 0; var wgen = 0
+        var revealed = false          // sayfaya 'ready' bildirildi mi (logo kalkar)
+        var bufSince = 0L; var bgen = 0; var sgen = 0; var stgen = 0
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -143,10 +145,30 @@ class GridVideo(
         p.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_READY) {
-                    c.everReady = true; c.retries = 0
-                    // Logo ancak ilk kare çizilince kalkar (yoksa ses gelir, ekran boş kalır). Videosuz (sadece ses) akışta hemen hazır de.
-                    if (c.frameShown || !c.hasVideo) send(i, JSONObject().put("t", "ready"))
-                } else if (state != Player.STATE_BUFFERING) c.readySince = 0L
+                    c.everReady = true; c.retries = 0; c.bufSince = 0L; c.bgen++
+                    // İlk kare çizildiyse (ya da yayın sadece sesse) hemen hazır de. Kare olayı gecikirse/hiç gelmezse
+                    // 1,2 sn sonra yine de hazır de: aksi halde ses çalarken logo sonsuza dek kutuyu örter.
+                    if (c.frameShown || !c.hasVideo) reveal(i, c)
+                    else {
+                        val sg = ++c.sgen
+                        handler.postDelayed({
+                            if (c.sgen == sg && c.loaded && c.player?.playbackState == Player.STATE_READY) reveal(i, c)
+                        }, 1200)
+                    }
+                } else {
+                    c.readySince = 0L
+                    if (state == Player.STATE_BUFFERING) {
+                        if (c.bufSince == 0L) c.bufSince = SystemClock.elapsedRealtime()
+                        if (c.revealed) {
+                            // Oynarken takılma: 1,2 sn'den uzun sürerse sayfa küçük yükleniyor halkası gösterir
+                            val bg = ++c.bgen
+                            handler.postDelayed({
+                                if (c.bgen == bg && c.loaded && c.player?.playbackState == Player.STATE_BUFFERING)
+                                    send(i, JSONObject().put("t", "st").put("s", "buf"))
+                            }, 1200)
+                        }
+                    }
+                }
             }
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
                 c.hasVideo = tracks.isTypeSelected(C.TRACK_TYPE_VIDEO)
@@ -155,7 +177,8 @@ class GridVideo(
                 c.frameShown = true
                 if (!c.everReady) { c.everReady = true; c.retries = 0 }
                 refresh(c)
-                send(i, JSONObject().put("t", "ready"))
+                reveal(i, c)
+                send(i, JSONObject().put("t", "fr"))
             }
             override fun onVideoSizeChanged(vs: VideoSize) {
                 if (vs.height >= 2000) setTexture(c, true)        // 4K: SurfaceView/HW overlay yolu bozuk/boş çıkabiliyor → GPU yolu
@@ -173,6 +196,31 @@ class GridVideo(
         p.volume = if (c.muted) 0f else 1f
         c.player = p
         return p
+    }
+
+    /** Sayfaya "kutu hazır" bildirir; kutu logosu kalkar. Tekrar tekrar çağrılabilir (takılmadan kurtulunca da). */
+    private fun reveal(i: Int, c: Cell) {
+        c.revealed = true
+        send(i, JSONObject().put("t", "ready"))
+    }
+
+    /** Takılma bekçisi: oynarken 15 sn'den uzun BUFFERING'de kalan canlı yayını yeniden hazırlar. */
+    private fun watchStall(i: Int, c: Cell) {
+        val g = ++c.stgen
+        val r = object : Runnable {
+            override fun run() {
+                if (c.stgen != g || cells.getOrNull(i) !== c || !c.loaded) return
+                val p = c.player
+                if (p != null && c.everReady && p.playbackState == Player.STATE_BUFFERING && c.bufSince != 0L &&
+                    SystemClock.elapsedRealtime() - c.bufSince > 15_000L) {
+                    c.bufSince = SystemClock.elapsedRealtime()
+                    send(i, JSONObject().put("t", "st").put("s", "rec"))
+                    p.seekToDefaultPosition(); p.prepare(); p.playWhenReady = true
+                }
+                handler.postDelayed(this, 2000)
+            }
+        }
+        handler.postDelayed(r, 2000)
     }
 
     private fun buildSource(c: Cell, kind: String): androidx.media3.exoplayer.source.MediaSource {
@@ -217,6 +265,7 @@ class GridVideo(
         c.kind = kind
         c.altTried = false; c.everReady = false; c.retries = 0; c.ratio = 0f
         c.frameShown = false; c.hasVideo = false; c.readySince = 0L; c.frameFix = 0
+        c.revealed = false; c.bufSince = 0L; c.sgen++
         c.loaded = true
         p.stop()
         // gLoad bazen WebView'in ilk gRect ölçümünden önce gelir. Tutucu sıfır
@@ -232,6 +281,7 @@ class GridVideo(
         }
         startDiag(i, c)
         watchFrames(i, c)
+        watchStall(i, c)
         if (!VavooResolver.matches(url)) {
             startSource(c, url, ua, ref)
             return
@@ -299,12 +349,11 @@ class GridVideo(
         val c = cell(i) ?: return
         c.muted = muted
         c.player?.volume = if (muted) 0f else 1f
-        android.widget.Toast.makeText(act, "SES-TANI kutu " + (i + 1) + ": " + (if (muted) "SESSİZ" else "AÇIK"), android.widget.Toast.LENGTH_SHORT).show()
     }
 
     fun stop(i: Int) {
         val c = cells.getOrNull(i) ?: return
-        c.loaded = false; c.rgen++; c.wgen++; c.refreshGen++
+        c.loaded = false; c.revealed = false; c.rgen++; c.wgen++; c.bgen++; c.sgen++; c.stgen++; c.refreshGen++
         c.refreshTask?.let { handler.removeCallbacks(it) }; c.refreshTask = null
         c.player?.let { it.stop(); it.clearMediaItems() }
         refresh(c)
@@ -506,11 +555,9 @@ class GridVideo(
         Player.STATE_READY -> "READY"; Player.STATE_ENDED -> "ENDED"; else -> "?"
     }
 
+    /** Tanı satırı: sayfa yalnızca yavaş açılışta (6 sn+) küçük gri yazı olarak gösterir. */
     private fun dbg(i: Int, s: String) {
-        val q = JSONObject.quote(s)
-        toJs("(function(){try{var l=document.querySelectorAll('.umit-grid-logo')[$i];" +
-            "if(!l||l.style.visibility==='hidden')return;var m=l.lastElementChild;" +
-            "if(m&&/^Açmaya/.test(m.textContent))m.textContent='Açmaya çalışıyorum.. ['+$q+']';}catch(e){}})()")
+        send(i, JSONObject().put("t", "dg").put("m", s))
     }
 
     private fun startDiag(i: Int, c: Cell) {
@@ -519,7 +566,7 @@ class GridVideo(
         c.lastErr = ""
         val r = object : Runnable {
             override fun run() {
-                if (c.gen != g || !c.loaded || c.frameShown) return
+                if (c.gen != g || !c.loaded || c.frameShown || c.revealed) return
                 val sec = (SystemClock.elapsedRealtime() - c.t0) / 1000
                 val st = c.player?.let { stateName(it.playbackState) } ?: "yok"
                 val sf = if (c.useTex) {
