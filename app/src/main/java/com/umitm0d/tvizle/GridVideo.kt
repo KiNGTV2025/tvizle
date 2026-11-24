@@ -206,8 +206,10 @@ class GridVideo(
         // SurfaceView bazı cihazlarda ses üretirken görüntüyü siyah bırakabiliyor.
         // Her kutuda TextureView'i yayın başlamadan önce bağla; böylece çözünürlük
         // değişimini beklemeden aynı composited view katmanında çizim yapılır.
-        c.forceTex = true
-        setTexture(c, true)
+        // TextureView bu cihazlarda (qcom OMX) ses var/görüntü yok sorununa yol açtı. Ana oynatıcıda kanıtlanmış
+        // SurfaceView yolu kullanılır; kare gelmezse watchFrames() kendisi TextureView'e geçer, 4K'da onVideoSizeChanged geçer.
+        c.forceTex = false
+        setTexture(c, false)
         val g = ++c.rgen
         c.src = url; c.vavooRetried = false
         c.refreshGen++

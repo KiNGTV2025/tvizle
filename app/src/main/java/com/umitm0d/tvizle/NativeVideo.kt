@@ -443,9 +443,11 @@ class NativeVideo(
     }
     fun gridEnd() {
         if (gridSnapVol < 0f) return
-        volume = gridSnapVol.coerceIn(0f, 1f)
-        muted = gridSnapMuted
-        val restorePlaying = gridSnapPlaying
+        // Çoklu ekrandan çıkınca ana yayın MUTLAKA duyulsun: sayfa ana videoyu çoklu ekrana girerken sessize aldığı için
+        // anlık görüntü (snapshot) sessiz kalıyor ve çıkışta ses geri gelmiyordu.
+        volume = if (gridSnapVol > 0.01f) gridSnapVol.coerceIn(0f, 1f) else 1f
+        muted = false
+        val restorePlaying = gridSnapPlaying || player?.isCurrentMediaItemLive == true
         gridSnapVol = -1f
         gridEndAt = android.os.SystemClock.elapsedRealtime()
         player?.let { p ->
