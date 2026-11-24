@@ -1,0 +1,1 @@
+v7.8: PiP sonrası video SurfaceView katmanı WebView'in üstünde kalıyordu (bringToFront); modallar videonun arkasında açılıyordu. bringToFront kaldırıldı, PiP çıkışında katman index 0'a geri alınır.

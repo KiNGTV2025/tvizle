@@ -733,7 +733,6 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         fun enterPip(): Boolean {
             pipLastError = ""
             lastPipFailure = ""
-            runCatching { runOnUiThread { android.widget.Toast.makeText(this@MainActivity, "PiP isteği alındı", android.widget.Toast.LENGTH_SHORT).show() } }
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
                 pipLastError = "Android 8.0 veya üzeri gerekli"
                 return false
@@ -744,7 +743,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 pipLastError = "Güvenilir ÜmitTV sayfası algılanamadı: ${web.url ?: "URL yok"}"
                 return false
             }
-            return try {
+            val res = try {
                 if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
                     enterNativePip()
                 } else {
@@ -756,6 +755,10 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 pipLastError = "PiP isteği çalıştırılamadı: ${e.javaClass.simpleName} ${e.message ?: ""}".take(180)
                 false
             }
+            // Sonucu her durumda yerel Toast ile göster (tek Toast; sayfa toast'ından bağımsız).
+            val msg = if (res) "PiP açıldı" else "PiP başarısız: " + pipLastError()
+            runOnUiThread { android.widget.Toast.makeText(this@MainActivity, msg, android.widget.Toast.LENGTH_LONG).show() }
+            return res
         }
 
         @JavascriptInterface
@@ -1173,9 +1176,6 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     /** Sayfa tarafı toast'u eski sayfada mesajı ezebildiği için hatayı yerel Toast ile de göster. */
     private fun enterNativePip(): Boolean {
         val ok = enterNativePipInner()
-        if (!ok && lastPipFailure.isNotBlank()) {
-            runCatching { android.widget.Toast.makeText(this, "PiP: $lastPipFailure", android.widget.Toast.LENGTH_LONG).show() }
-        }
         return ok
     }
 

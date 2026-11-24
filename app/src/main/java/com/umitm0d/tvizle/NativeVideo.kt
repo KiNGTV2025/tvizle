@@ -123,7 +123,7 @@ class NativeVideo(
     fun setPipMode(enabled: Boolean) {
         if (enabled) {
             holder.visibility = if (loaded) View.VISIBLE else View.GONE
-            holder.bringToFront()
+            // bringToFront() KALDIRILDI: PiP'den sonra video katmanı WebView'in üstünde kalıp modalları örtüyordu.
             holder.layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER)
             holder.post {
@@ -137,6 +137,14 @@ class NativeVideo(
                 }
             }
         } else {
+            // Video katmanı her zaman WebView'in ALTINDA (index 0) olmalı; modallar videonun üstünde görünsün.
+            (holder.parent as? ViewGroup)?.let { par ->
+                if (par.indexOfChild(holder) != 0) {
+                    val lp = holder.layoutParams
+                    par.removeView(holder)
+                    par.addView(holder, 0, lp)
+                }
+            }
             reapply()
         }
     }
