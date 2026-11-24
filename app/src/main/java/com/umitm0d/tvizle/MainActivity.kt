@@ -74,6 +74,8 @@ open class MainActivity : Activity() {
     @Volatile private var autoPipEnabled = true
     private var pipLayoutActive = false
     @Volatile private var lastPipFailure: String = ""
+    /** Televizyon / TV kutusu: PiP bu cihazlarda hiçbir yoldan açılmaz (düğme, otomatik, ana ekrana basış). */
+    private val onTvDevice: Boolean by lazy { runCatching { DecoderTweaks.isTv(this) }.getOrDefault(false) }
 
 
     companion object {
@@ -570,12 +572,12 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         }
         override fun onPageFinished(v: WebView, url: String?) {
             super.onPageFinished(v, url)
-            v.evaluateJavascript(PIP_SHIM_JS, null)   // güven denetimi enterPip() içinde yapılır
+            if (!onTvDevice) v.evaluateJavascript(PIP_SHIM_JS, null)   // TV'de PiP yok; güven denetimi enterPip() içinde yapılır
             if (NATIVE_MAIN_PLAYER && url != null && url.startsWith(REMOTE_URL)) v.evaluateJavascript(HOOK_JS, null)
         }
         override fun onPageStarted(v: WebView, url: String?, favicon: android.graphics.Bitmap?) {
             super.onPageStarted(v, url, favicon)
-            v.evaluateJavascript(PIP_SHIM_JS, null)   // güven denetimi enterPip() içinde yapılır
+            if (!onTvDevice) v.evaluateJavascript(PIP_SHIM_JS, null)   // TV'de PiP yok; güven denetimi enterPip() içinde yapılır
             if (NATIVE_MAIN_PLAYER && url != null && url.startsWith(REMOTE_URL)) v.evaluateJavascript(HOOK_JS, null)
             // Çevrimdışı sayfasından "Tekrar dene"ye basıldı: normal moda dön
             if (phase == 2 && url == REMOTE_URL) {
@@ -724,7 +726,11 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         @Volatile private var pipLastError: String = ""
 
         @JavascriptInterface
-        fun pipSupported(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+        fun pipSupported(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !onTvDevice
+
+        /** Sayfa, TV'de PiP düğmelerini/ayarlarını gizlemek ve PiP API'lerini kapatmak için kullanır. */
+        @JavascriptInterface
+        fun isTvDevice(): Boolean = onTvDevice
 
         @JavascriptInterface
         fun pipLastError(): String = if (lastPipFailure.isNotBlank()) lastPipFailure else pipLastError
@@ -1200,6 +1206,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
     /** Sayfa tarafı toast'u eski sayfada mesajı ezebildiği için hatayı yerel Toast ile de göster. */
     private fun enterNativePip(): Boolean {
+        if (onTvDevice) { lastPipFailure = "Televizyonda PiP kullanılamaz"; return false }
         val ok = enterNativePipInner()
         return ok
     }
@@ -1257,7 +1264,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     @Suppress("DEPRECATION")
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (autoPipEnabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nv.isPlayingForPip && !gv.hasActiveCells) {
+        if (!onTvDevice && autoPipEnabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nv.isPlayingForPip && !gv.hasActiveCells) {
             enterNativePip()
         }
     }
