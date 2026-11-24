@@ -441,7 +441,11 @@ class NativeVideo(
         }
     }
     fun volume(v: Double, m: Boolean) {
-        // Grid kapanışında WebView'den gecikmeli gelen eski mute durumu ana sesi kapatmasın.
+        // Çoklu ekran açıkken WebView'in grid hücrelerinden gelen mute/volume
+        // olayları ana oynatıcının ses durumunu değiştirmesin. gridEnd() saklanan
+        // ana ses durumunu tek noktadan geri yükler.
+        if (gridSnapVol >= 0f) return
+        // Kapanıştan hemen sonra sırada kalmış eski mute olayı da ana sesi kapatmasın.
         if (m && android.os.SystemClock.elapsedRealtime() - gridEndAt < 2500L) return
         val was = muted
         volume = v.toFloat().coerceIn(0f, 1f); muted = m; player?.let { applyVolume(it) }

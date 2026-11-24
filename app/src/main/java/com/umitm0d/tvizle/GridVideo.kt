@@ -94,8 +94,12 @@ class GridVideo(
                     if (cells.getOrNull(i) !== c || !c.loaded) return@post
                     c.holder.visibility = View.VISIBLE
                     c.surface.visibility = View.VISIBLE
-                    c.player?.let { p ->
-                        runCatching { p.setVideoSurfaceView(c.surface) }
+                    // TextureView aktifse SurfaceView'e yeniden bağlanma:
+                    // bu, TextureView'e çizilen kareleri siyah yüzeyle değiştiriyordu.
+                    if (!c.useTex) {
+                        c.player?.let { p ->
+                            runCatching { p.setVideoSurfaceView(c.surface) }
+                        }
                     }
                     c.holder.requestLayout()
                     applyFit(c)
@@ -220,7 +224,7 @@ class GridVideo(
         c.surface.visibility = View.VISIBLE
         refresh(c)
         c.holder.post {
-            if (cells.getOrNull(i) === c && c.loaded && c.surface.holder.surface.isValid) {
+            if (cells.getOrNull(i) === c && c.loaded && !c.useTex && c.surface.holder.surface.isValid) {
                 runCatching { c.player?.setVideoSurfaceView(c.surface) }
             }
         }
