@@ -6,6 +6,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.Gravity
 import android.view.SurfaceView
+import android.view.SurfaceHolder
 import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
@@ -82,9 +83,36 @@ class GridVideo(
         // Bu nedenle varsayılan SurfaceView sıralaması korunur.
         holder.addView(surface, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
+        val c = Cell(holder, surface)
+        // SurfaceView'in ilk oluşturulması sırasında holder INVISIBLE kalırsa bazı Android
+        // sürümlerinde surfaceCreated hiç tetiklenmiyor. Yüzey hazır olduğunda ilgili
+        // ExoPlayer'a açıkça yeniden bağla; her hücre kendi callback'ini taşır.
+        surface.holder.addCallback(object : SurfaceHolder.Callback {
+            override fun surfaceCreated(h: SurfaceHolder) {
+                handler.post {
+                    if (cells.getOrNull(i) !== c || !c.loaded) return@post
+                    c.holder.visibility = View.VISIBLE
+                    c.surface.visibility = View.VISIBLE
+                    c.player?.let { p ->
+                        runCatching { p.setVideoSurfaceView(c.surface) }
+                    }
+                    c.holder.requestLayout()
+                    applyFit(c)
+                }
+            }
+            override fun surfaceChanged(h: SurfaceHolder, format: Int, width: Int, height: Int) {
+                if (width > 0 && height > 0) handler.post {
+                    if (cells.getOrNull(i) === c && c.loaded && !c.useTex) {
+                        c.player?.let { p -> runCatching { p.setVideoSurfaceView(c.surface) } }
+                    }
+                }
+            }
+            override fun surfaceDestroyed(h: SurfaceHolder) {
+                // Media3 yüzey yok oluşunu kendi takip eder; eski yüzeye dokunma.
+            }
+        })
         val at = root.indexOfChild(web).let { if (it < 0) 0 else it }
         root.addView(holder, at, FrameLayout.LayoutParams(0, 0, Gravity.TOP or Gravity.START))
-        val c = Cell(holder, surface)
         cells[i] = c
         return c
     }
@@ -176,7 +204,17 @@ class GridVideo(
         c.frameShown = false; c.hasVideo = false; c.readySince = 0L; c.frameFix = 0
         c.loaded = true
         p.stop()
+        // gLoad bazen WebView'in ilk gRect ölçümünden önce gelir. Tutucu sıfır
+        // ölçüdeyken SurfaceView oluşturulmasını beklemek yerine görünürlüğü aç;
+        // ölçü geldiğinde rect() gerçek boyutu uygular.
+        c.holder.visibility = View.VISIBLE
+        c.surface.visibility = View.VISIBLE
         refresh(c)
+        c.holder.post {
+            if (cells.getOrNull(i) === c && c.loaded && c.surface.holder.surface.isValid) {
+                runCatching { c.player?.setVideoSurfaceView(c.surface) }
+            }
+        }
         startDiag(i, c)
         watchFrames(i, c)
         if (!VavooResolver.matches(url)) {
@@ -434,8 +472,12 @@ class GridVideo(
                 if (c.gen != g || !c.loaded || c.frameShown) return
                 val sec = (SystemClock.elapsedRealtime() - c.t0) / 1000
                 val st = c.player?.let { stateName(it.playbackState) } ?: "yok"
-                val sf = if (c.surface.holder.surface.isValid) "var" else "YOK"
-                dbg(i, st + " · yüzey " + sf + " · " + sec + "s" + (if (c.lastErr.isNotEmpty()) " · " + c.lastErr else ""))
+                val sf = if (c.useTex) {
+                    if (c.tex?.isAvailable == true) "Texture var" else "Texture YOK"
+                } else {
+                    if (c.surface.holder.surface.isValid) "Surface var" else "Surface YOK"
+                }
+                dbg(i, st + " · " + sf + " · " + sec + "s" + (if (c.lastErr.isNotEmpty()) " · " + c.lastErr else ""))
                 if (sec >= 30) { send(i, JSONObject().put("t", "er").put("c", -1).put("m", "zaman aşımı: $st yüzey $sf ${c.lastErr}")); return }
                 handler.postDelayed(this, 1000)
             }
