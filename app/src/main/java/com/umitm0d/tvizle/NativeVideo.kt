@@ -107,12 +107,30 @@ class NativeVideo(
     fun recSource(): Array<String> = arrayOf(curUrl, lastUa, lastRef)
     val isPlayingForPip: Boolean get() = loaded && (player?.isPlaying == true || player?.playWhenReady == true)
 
-    /** PiP penceresinde WebView gizlenirken video yüzeyini tüm pencereye genişletir. */
+    /** PiP penceresinde video yüzeyini Activity'nin küçülen penceresine taşır.
+     * SurfaceView bazı cihazlarda PiP katmanında siyah kalabildiğinden PiP boyunca
+     * TextureView (uygulama penceresiyle birlikte birleştirilen GPU yüzeyi) kullanılır.
+     */
     fun setPipMode(enabled: Boolean) {
         if (enabled) {
+            val p = player
+            if (p != null && !useTex) {
+                forceTex = true
+                setTexture(true)
+            }
+            holder.visibility = if (loaded) View.VISIBLE else View.GONE
             holder.layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER)
-            holder.visibility = if (loaded) View.VISIBLE else View.GONE
+            holder.post {
+                if (loaded) {
+                    holder.visibility = View.VISIBLE
+                    vview.layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER)
+                    holder.requestLayout()
+                    vview.requestLayout()
+                    holder.invalidate()
+                }
+            }
         } else {
             reapply()
         }
