@@ -107,6 +107,9 @@ class NativeVideo(
     /** Kayıt için: oynatıcının şu an kullandığı (çözülmüş) adres ve başlıkları. */
     fun recSource(): Array<String> = arrayOf(curUrl, lastUa, lastRef)
     val isPlayingForPip: Boolean get() = loaded && (player?.isPlaying == true || player?.playWhenReady == true)
+    // PiP için yalnızca isPlaying'e bağlı kalma: canlı yayın tamponlarken
+    // player BUFFERING durumunda olabilir ama video yüzeyi ve medya kaynağı hazırdır.
+    val hasMediaForPip: Boolean get() = loaded && player != null && player?.playbackState != Player.STATE_IDLE
 
     /** PiP sırasında çalışan video SurfaceView bağlantısını değiştirme.
      * Surface'i değiştirmek oynatıcıda ses devam ederken video çıkışını kaybettirebilir.

@@ -705,9 +705,19 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
         @JavascriptInterface
         fun enterPip(): Boolean {
-            if (!isTrustedUrl(web.url) || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
-            runOnUiThread { enterNativePip() }
-            return true
+            // JS köprüsü ayrı bir iş parçacığında çalışır. Önceki sürüm UI'ya
+            // isteği kuyruğa koyup sonucu beklemeden true dönüyordu; PiP reddedilse
+            // bile sayfa başarı sanıyor, gerçek hata da kayboluyordu.
+            if (!pageTrusted() || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+            return try {
+                if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+                    enterNativePip()
+                } else {
+                    val task = FutureTask<Boolean> { enterNativePip() }
+                    runOnUiThread(task)
+                    task.get(2500, TimeUnit.MILLISECONDS)
+                }
+            } catch (_: Exception) { false }
         }
 
         @JavascriptInterface
@@ -1125,7 +1135,13 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     private fun enterNativePip(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
             !packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return false
-        if (!nv.isPlayingForPip || gv.hasActiveCells) return false
+        // Çoklu ekranın eski hücreleri kalmışsa ana yayın için PiP'yi bloke etmesin.
+        // PiP tek ana oynatıcıyı taşır; grid'i temizleyip ana ses/yayın durumunu geri al.
+        if (gv.hasActiveCells) {
+            runCatching { gv.stopAll() }
+            runCatching { nv.gridEnd() }
+        }
+        if (!nv.hasMediaForPip) return false
         return try {
             val params = android.app.PictureInPictureParams.Builder()
                 .setAspectRatio(android.util.Rational(16, 9))
