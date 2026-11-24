@@ -174,7 +174,7 @@ function why(){var m='';try{m=U.pipLastError();}catch(e){}return m||'PiP başlat
 try{Object.defineProperty(document,'pictureInPictureEnabled',{configurable:true,get:function(){return true;}});}catch(e){}
 try{HTMLVideoElement.prototype.requestPictureInPicture=function(){
   if(go())return Promise.resolve({});
-  var m=why();try{if(typeof toast==='function')toast(m,'warn');}catch(e){}
+  var m=why();setTimeout(function(){try{if(typeof toast==='function')toast(m,'warn');}catch(e){}},700);
   return Promise.reject(new DOMException(m,'NotAllowedError'));};}catch(e){}
 try{Object.defineProperty(HTMLVideoElement.prototype,'disablePictureInPicture',{configurable:true,get:function(){return false;},set:function(){}});}catch(e){}
 })();"""
@@ -1169,11 +1169,26 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
     }
 
+    /** Sayfa tarafı toast'u eski sayfada mesajı ezebildiği için hatayı yerel Toast ile de göster. */
     private fun enterNativePip(): Boolean {
+        val ok = enterNativePipInner()
+        if (!ok && lastPipFailure.isNotBlank()) {
+            runCatching { android.widget.Toast.makeText(this, "PiP: $lastPipFailure", android.widget.Toast.LENGTH_LONG).show() }
+        }
+        return ok
+    }
+
+    private fun enterNativePipInner(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            lastPipFailure = "Android 8.0 veya üzeri gerekli"
             return false
         }
-        if (isFinishing || isDestroyed) return false
+        if (!packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
+            lastPipFailure = "Cihaz PiP özelliğini bildirmiyor (FEATURE_PICTURE_IN_PICTURE yok)"
+            return false
+        }
+        if (isInPictureInPictureMode) { lastPipFailure = "Zaten PiP modunda"; return false }
+        if (isFinishing || isDestroyed) { lastPipFailure = "Activity kapanıyor"; return false }
         // Çoklu ekranın yüzeyleri ana video yüzeyinin önünde kalmasın.
         if (gv.hasActiveCells) {
             runCatching { gv.stopAll() }
