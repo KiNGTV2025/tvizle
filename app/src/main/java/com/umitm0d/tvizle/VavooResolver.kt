@@ -11,22 +11,11 @@ import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
-/**
- * Vavoo bağlantılarını (vavoo.to / kool.to / huhu.to … ve /live/play/ biçimi) gerçek yayın adresine çevirir.
- *
- * Kullanım:
- *   if (VavooResolver.matches(url)) {
- *       VavooResolver.cached(url)?.let { oynat(it) } ?: VavooResolver.resolveAsync(url) { sonuc -> ... }
- *   }
- * Çözülen adres oynatılırken User-Agent = [UA_APP], Referer = [REFERER] kullanılmalıdır.
- *
- * smali'deki hooks.VavooResolver sınıfının Kotlin karşılığıdır (map/ua/ref yerine açık parametre kullanır).
- */
 object VavooResolver {
 
-    const val REFERER = "https://vavoo.to/"
-    const val UA_APP = "Mozilla/5.0 (Linux; Android 14; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
-    private const val UA_PING = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
+    val REFERER: String get() = ObfuscatedText.get(0)
+    val UA_APP: String get() = ObfuscatedText.get(28)
+    private val UA_PING: String get() = ObfuscatedText.get(29)
 
     private const val TTL = 120_000L          // çözülmüş adres 2 dk geçerli
     private const val SIG_TTL = 900_000L      // imza 15 dk geçerli
@@ -45,21 +34,21 @@ object VavooResolver {
         "https://cache.vypn.net/api/app/ping"
     )
     private val RESOLVE_URLS = arrayOf(
-        "https://voltop.net/mediahubmx-resolve.json",
-        "https://vavoo.net/mediahubmx-resolve.json",
-        "https://kool.to/mediahubmx-resolve.json",
-        "https://kool.ws/mediahubmx-resolve.json"
+        ObfuscatedText.get(1),
+        ObfuscatedText.get(2),
+        ObfuscatedText.get(3),
+        ObfuscatedText.get(4)
     )
     private val LIVE_BASES = arrayOf(
-        "https://voltop.net",
-        "https://vavoo.net",
-        "https://geil.to",
-        "https://kool.to",
-        "https://kool.ws"
+        ObfuscatedText.get(5),
+        ObfuscatedText.get(6),
+        ObfuscatedText.get(7),
+        ObfuscatedText.get(8),
+        ObfuscatedText.get(9)
     )
     private val HOST_MARKS = arrayOf(
-        "voltop.net/", "vavoo.net/", "geil.to/", "kool.to/", "kool.ws/",
-        "vavoo.to/", "oha.to/", "huhu.to/", "/vavoo-iptv/", "/live/play/"
+        ObfuscatedText.get(10), ObfuscatedText.get(11), ObfuscatedText.get(12), ObfuscatedText.get(13), ObfuscatedText.get(14),
+        ObfuscatedText.get(15), ObfuscatedText.get(16), ObfuscatedText.get(17), ObfuscatedText.get(18), ObfuscatedText.get(19)
     )
 
     // ───────────── Dışarıya açık API ─────────────
@@ -245,7 +234,7 @@ object VavooResolver {
                     val j = JSONObject(r)
                     val s = first(
                         j.optString("sig"), j.optString("addonSig"), j.optString("signature"),
-                        j.optString("mediahubmxSignature"), j.optString("mediahubmx-signature"),
+                        j.optString(ObfuscatedText.get(20)), j.optString(ObfuscatedText.get(21)),
                         j.optString("token")
                     )
                     if (s != null) {
@@ -275,7 +264,7 @@ object VavooResolver {
             c.setRequestProperty("Accept", "*/*")
             c.setRequestProperty("Accept-Language", "de")
             c.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            if (!signature.isNullOrEmpty()) c.setRequestProperty("mediahubmx-signature", signature)
+            if (!signature.isNullOrEmpty()) c.setRequestProperty(ObfuscatedText.get(21), signature)
             val r = send(c, body)
             if (r == null || r.trim().isEmpty()) null else r.trim()
         } catch (_: Throwable) {
@@ -292,7 +281,7 @@ object VavooResolver {
             head.setRequestProperty("User-Agent", UA_APP)
             head.setRequestProperty("Accept", "*/*")
             head.setRequestProperty("Connection", "close")
-            if (signature != null) head.setRequestProperty("mediahubmx-signature", signature)
+            if (signature != null) head.setRequestProperty(ObfuscatedText.get(21), signature)
             head.responseCode
             val finalU = head.url.toString()
             val ct = head.contentType
@@ -334,11 +323,11 @@ object VavooResolver {
     }
 
     private fun resolve(src: String): String? {
-        if (src.lowercase(Locale.ROOT).contains("/live/play/")) return liveResolve(src)
+        if (src.lowercase(Locale.ROOT).contains(ObfuscatedText.get(19))) return liveResolve(src)
         var p = src
-        if (!p.contains("/vavoo-iptv/")) {
+        if (!p.contains(ObfuscatedText.get(18))) {
             val i = p.indexOf("/play/")
-            if (i != -1) p = "https://vavoo.to/vavoo-iptv/play/" + p.substring(i + 6)
+            if (i != -1) p = ObfuscatedText.get(22) + p.substring(i + 6)
         }
         val s = cachedSig() ?: fetchSig()
         for (ep in RESOLVE_URLS) {

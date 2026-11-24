@@ -58,6 +58,7 @@ class GridVideo(
         var resumeOnStart = false
         var gen = 0; var t0 = 0L; var lastErr = ""
         var src = ""; var rgen = 0; var vavooRetried = false
+        var refreshGen = 0; var refreshTask: Runnable? = null
         var lastRect: DoubleArray? = null
         // Görüntü gelmeme koruması (ana oynatıcıdaki gibi): ses çalıp kare çizilmezse yüzeyi yeniden bağla → TextureView → yazılım dekoder
         var tex: TextureView? = null; var useTex = false; var forceTex = false
@@ -199,6 +200,8 @@ class GridVideo(
         val p = ensurePlayer(i, c)
         val g = ++c.rgen
         c.src = url; c.vavooRetried = false
+        c.refreshGen++
+        c.refreshTask?.let { handler.removeCallbacks(it) }; c.refreshTask = null
         c.kind = kind
         c.altTried = false; c.everReady = false; c.retries = 0; c.ratio = 0f
         c.frameShown = false; c.hasVideo = false; c.readySince = 0L; c.frameFix = 0
@@ -234,9 +237,40 @@ class GridVideo(
             handler.post {
                 if (c.rgen != g || !c.loaded) return@post
                 if (r != null) startSource(c, r, VavooResolver.UA_APP, VavooResolver.REFERER)
-                else send(i, JSONObject().put("t", "er").put("c", -3).put("m", "VAVOO_RESOLVE"))
+                else send(i, JSONObject().put("t", "er").put("c", -3).put("m", ObfuscatedText.get(25)))
             }
         }
+    }
+
+    private fun scheduleVavooRefresh(i: Int, c: Cell) {
+        if (!VavooResolver.matches(c.src) || !c.loaded) return
+        val g = ++c.refreshGen
+        val task = object : Runnable {
+            override fun run() {
+                if (!c.loaded || c.refreshGen != g || cells.getOrNull(i) !== c) return
+                val original = c.src
+                VavooResolver.resolveAsync(original) { fresh ->
+                    handler.post {
+                        if (!c.loaded || c.refreshGen != g || c.src != original || cells.getOrNull(i) !== c) return@post
+                        if (fresh != null && fresh != c.url) {
+                            val p = c.player ?: return@post
+                            val wasPlaying = p.playWhenReady
+                            val live = p.isCurrentMediaItemLive
+                            val pos = p.currentPosition
+                            c.url = fresh; c.ua = VavooResolver.UA_APP; c.ref = VavooResolver.REFERER
+                            p.setMediaSource(buildSource(c, c.kind))
+                            if (!live && pos > 0L) p.seekTo(pos) else p.seekToDefaultPosition()
+                            p.playWhenReady = wasPlaying
+                            p.prepare()
+                            send(i, JSONObject().put("t", "dbg").put("m", "Yayın adresi kesinti öncesi yenilendi"))
+                        }
+                        handler.postDelayed(this, if (fresh == null) 30_000L else 6 * 60 * 1000L)
+                    }
+                }
+            }
+        }
+        c.refreshTask = task
+        handler.postDelayed(task, 6 * 60 * 1000L)
     }
 
     private fun startSource(c: Cell, url: String, ua: String, ref: String) {
@@ -245,6 +279,8 @@ class GridVideo(
         p.setMediaSource(buildSource(c, c.kind))
         p.playWhenReady = true
         p.prepare()
+        val i = cells.indexOf(c)
+        if (i >= 0) scheduleVavooRefresh(i, c)
     }
 
     fun mute(i: Int, muted: Boolean) {
@@ -256,7 +292,8 @@ class GridVideo(
 
     fun stop(i: Int) {
         val c = cells.getOrNull(i) ?: return
-        c.loaded = false; c.rgen++; c.wgen++
+        c.loaded = false; c.rgen++; c.wgen++; c.refreshGen++
+        c.refreshTask?.let { handler.removeCallbacks(it) }; c.refreshTask = null
         c.player?.let { it.stop(); it.clearMediaItems() }
         refresh(c)
     }
@@ -265,7 +302,8 @@ class GridVideo(
         handler.removeCallbacksAndMessages(null)
         for (i in 0 until MAX_CELLS) {
             val c = cells[i] ?: continue
-            c.loaded = false; c.showWanted = false
+            c.loaded = false; c.showWanted = false; c.refreshGen++
+            c.refreshTask?.let { handler.removeCallbacks(it) }; c.refreshTask = null
             c.player?.release(); c.player = null
             c.holder.visibility = View.INVISIBLE
             root.removeView(c.holder)

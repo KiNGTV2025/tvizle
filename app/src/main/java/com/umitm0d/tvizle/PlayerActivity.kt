@@ -444,7 +444,7 @@ class PlayerActivity : Activity() {
                 if (r != null) beginPlayback(r, VavooResolver.UA_APP, VavooResolver.REFERER)
                 else {
                     spinner.visibility = View.GONE
-                    msg.text = "Vavoo adresi çözülemedi\nTekrar denemek için OK'a bas, çıkmak için Geri."
+                    msg.text = ObfuscatedText.get(23)
                     msg.visibility = View.VISIBLE
                 }
             }

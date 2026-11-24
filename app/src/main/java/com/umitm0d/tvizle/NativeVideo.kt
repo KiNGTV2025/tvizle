@@ -63,7 +63,8 @@ class NativeVideo(
         private const val TICK_MS = 250L
         private const val MAX_SILENT_RETRIES = 6      // oynarken kopmada sayfaya hata gitmeden önce sessiz deneme sayısı
         private const val MAX_RESOLVE_TRIES = 3       // Vavoo çözümü başarısızsa sayfaya hata vermeden önce deneme sayısı
-        private const val MAX_MID_RESOLVES = 3        // oynarken yeniden çözme hakkı (30 sn kararlı oynayınca yenilenir)
+        private const val MAX_MID_RESOLVES = 3        // oynarken hata sonrası yeniden çözme hakkı
+        private const val VAVOO_REFRESH_MS = 6 * 60 * 1000L // yaklaşık 8 dk imza süresinden önce yenile
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -150,6 +151,33 @@ class NativeVideo(
     private var readyStableAt = 0L
     private var playedOk = false          // bu kanal (sayfanın load() çağrısı) için en az bir kez oynadı mı; yeniden çözmeler bunu SIFIRLAMAZ
     private var resolveTries = 0          // art arda başarısız Vavoo çözüm sayısı
+    private var proactiveRefreshGen = 0
+    private val proactiveVavooRefresh = object : Runnable {
+        override fun run() {
+            val src = vavooSrc
+            val gen = proactiveRefreshGen
+            if (!loaded || src.isBlank() || !VavooResolver.matches(src)) return
+            VavooResolver.resolveAsync(src) { fresh ->
+                handler.post {
+                    if (!loaded || gen != proactiveRefreshGen || src != vavooSrc) return@post
+                    if (fresh != null && fresh != curUrl) {
+                        val p = player ?: return@post
+                        val wasPlaying = p.playWhenReady
+                        val live = p.isCurrentMediaItemLive
+                        val pos = p.currentPosition
+                        curUrl = fresh
+                        p.setMediaSource(buildSource(fresh, VavooResolver.UA_APP, VavooResolver.REFERER, lastKind))
+                        if (!live && pos > 0L) p.seekTo(pos) else p.seekToDefaultPosition()
+                        p.playWhenReady = wasPlaying
+                        p.prepare()
+                        send(JSONObject().put("t", "dbg").put("m", "Yayın adresi kesinti öncesi yenilendi"))
+                    }
+                    // Çözüm sunucusu geçici hata verirse 30 sn sonra tekrar dene.
+                    handler.postDelayed(this, if (fresh == null) 30_000L else VAVOO_REFRESH_MS)
+                }
+            }
+        }
+    }
 
     // Görüntü gelmeme koruması: ses çalıp ilk video karesi çizilmezse (donanım dekoder sorunu) yazılım dekoderine geç
     private var preferSw = act.getSharedPreferences("umittv", android.content.Context.MODE_PRIVATE).getString("dec", "") == "sw"   // sw: yazılım dekoder öncelikli (kalıcı tercih ya da donanım hata verince otomatik)
@@ -319,6 +347,8 @@ class NativeVideo(
     // ───────────── Sayfadan gelen komutlar (hepsi ana iş parçacığında çağrılır) ─────────────
     fun load(url: String, ua: String, referer: String, startMs: Long, autoplay: Boolean, kind: String) {
         val gen = ++resolveGen
+        proactiveRefreshGen++
+        handler.removeCallbacks(proactiveVavooRefresh)
         newFrameSeen = false      // bu yükleme için henüz kare çizilmedi (donuk kare bunu bekler)
         playedOk = false          // yeni kanal: her şey baştan (yeniden çözmeler bunu sıfırlamaz)
         if (!VavooResolver.matches(url)) {
@@ -345,12 +375,12 @@ class NativeVideo(
                     loadResolved(r, VavooResolver.UA_APP, VavooResolver.REFERER, startMs, autoplay, kind)
                 } else if (++resolveTries < MAX_RESOLVE_TRIES) {
                     // Vavoo imza/çözüm sunucusu geçici yanıt vermedi: sayfaya hata (=kanalı baştan yükle + logo) yerine kendimiz tekrar dene
-                    send(JSONObject().put("t", "dbg").put("m", "Vavoo çözülemedi, tekrar deneniyor ($resolveTries/$MAX_RESOLVE_TRIES)"))
+                    send(JSONObject().put("t", "dbg").put("m", String.format(java.util.Locale.ROOT, ObfuscatedText.get(24), resolveTries, MAX_RESOLVE_TRIES)))
                     handler.postDelayed({ if (gen == resolveGen) resolveVavoo(src, gen, startMs, autoplay, kind) }, 1500L * resolveTries)
                 } else {
                     resolveTries = 0
                     send(JSONObject().put("t", "er").put("cat", "net").put("c", 0).put("hc", 0)
-                        .put("m", "VAVOO_RESOLVE"))
+                        .put("m", ObfuscatedText.get(25)))
                 }
             }
         }
@@ -363,6 +393,11 @@ class NativeVideo(
         firstFrame = false; readySince = 0L; swTried = false; hasVideoTrack = false; readyStableAt = 0L; frameFix = 0
         levelRefs = emptyList(); audioRefs = emptyList(); videoRatio = 0f
         loaded = true
+        if (vavooSrc.isNotBlank() && VavooResolver.matches(vavooSrc)) {
+            proactiveRefreshGen++
+            handler.removeCallbacks(proactiveVavooRefresh)
+            handler.postDelayed(proactiveVavooRefresh, VAVOO_REFRESH_MS)
+        }
         handler.removeCallbacks(retryRun)
         p.setMediaSource(buildSource(url, ua, referer, kind))
         if (startMs > 0) p.seekTo(startMs)
@@ -648,6 +683,8 @@ class NativeVideo(
         if (resumeOnStart) { player?.playWhenReady = true; resumeOnStart = false }
     }
     fun release() {
+        proactiveRefreshGen++
+        handler.removeCallbacks(proactiveVavooRefresh)
         handler.removeCallbacksAndMessages(null)
         restoreDisplayMode()
         player?.release(); player = null
@@ -857,7 +894,7 @@ class NativeVideo(
             if (vavooSrc.isNotEmpty() && hc0 in setOf(401, 403, 410) &&
                 vavooMidRetries < MAX_MID_RESOLVES) {
                 vavooMidRetries++
-                send(JSONObject().put("t", "dbg").put("m", "Vavoo yayın adresi yenileniyor ($vavooMidRetries/$MAX_MID_RESOLVES)"))
+                send(JSONObject().put("t", "dbg").put("m", String.format(java.util.Locale.ROOT, ObfuscatedText.get(26), vavooMidRetries, MAX_MID_RESOLVES)))
                 VavooResolver.invalidate(vavooSrc)
                 resolveVavoo(vavooSrc, ++resolveGen, 0L, true, lastKind)
                 return
@@ -873,7 +910,7 @@ class NativeVideo(
             // 2) Vavoo: token/adres bayatlamış olabilir → sessizce yeniden çözdür
             if (vavooSrc.isNotEmpty() && vavooMidRetries < MAX_MID_RESOLVES) {
                 vavooMidRetries++
-                send(JSONObject().put("t", "dbg").put("m", "Yayın koptu ($diag): Vavoo adresi yenileniyor ($vavooMidRetries/$MAX_MID_RESOLVES)"))
+                send(JSONObject().put("t", "dbg").put("m", String.format(java.util.Locale.ROOT, ObfuscatedText.get(27), diag, vavooMidRetries, MAX_MID_RESOLVES)))
                 VavooResolver.invalidate(vavooSrc)
                 resolveVavoo(vavooSrc, ++resolveGen, 0L, true, lastKind)
                 return
