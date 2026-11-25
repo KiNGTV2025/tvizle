@@ -13,8 +13,8 @@ android {
         applicationId = "com.umitm0d.tvizle"
         minSdk = 23   // Media3 1.9+ minSdk 23 (Android 6.0) istiyor
         targetSdk = 30
-        versionCode = (project.findProperty("vcode") as String?)?.toIntOrNull() ?: 808
-        versionName = (project.findProperty("vname") as String?) ?: "8.8"
+        versionCode = (project.findProperty("vcode") as String?)?.toIntOrNull() ?: 809
+        versionName = (project.findProperty("vname") as String?) ?: "8.9"
         // Sayfa anahtarı isteğini imzalayan gizli (CI secret'ı APP_HMAC_SECRET; kaynakta yok, APK'da XOR'lu)
         val appSec = System.getenv("APP_HMAC_SECRET") ?: ""
         val appSecEnc = Base64.getEncoder().encodeToString(
