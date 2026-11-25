@@ -1,8 +1,0 @@
-ÜmitTV 9.7 – TV Box kumanda gezinme performansı
-
-- Kanal listesi odak vurgusu artık her tuşta tüm kanal kartlarını taramaz; yalnızca önceki ve yeni odak kartı güncellenir.
-- Odak vurgusu güncellemeleri tek requestAnimationFrame içinde birleştirilir.
-- Düşük performanslı TV Box profilinde basılı tutulan yön tuşlarının tekrar işleme aralığı 90 ms yapılır. Normal cihazların gezinme davranışı korunur.
-- Önceki 9.6 Vavoo HLS yerel oynatma listesi proxy/yenileme sistemi korunmuştur.
-
-Doğrulama: HTML JavaScript sözdizimi ve ZIP bütünlüğü kontrol edilecektir. Android APK derlemesi için bu ortamda Android SDK/Gradle wrapper bulunmadığından APK derlemesi yapılmamıştır. Gerçek TV Box üzerinde FPS/tepki testi ayrıca gereklidir.
