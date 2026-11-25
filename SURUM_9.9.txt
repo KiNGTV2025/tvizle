@@ -1,0 +1,10 @@
+ÜMITTV 9.9 — İSTEĞE BAĞLI SADE ARAYÜZ VE TV BOX KANAL LİSTESİ PERFORMANSI
+
+- Ayarlar ekranına isteğe bağlı “Sade arayüz” anahtarı eklendi. Varsayılan olarak kapalıdır; standart görünüm değişmeden kalır.
+- Sade arayüz açıldığında görsel parıltılar, gölgeler ve gereksiz geçişler azaltılır.
+- TV cihazlarında kanal listesi açılırken hafif çizim profili hemen etkinleşir.
+- TV/Ultra profilde kanal kartlarının EPG ayrıntı hesaplaması ve kanal logosu ağ istekleri atlanır; kanal adı ve temel kanal bilgileri korunur.
+- Sanal kanal listesinde TV/Ultra profilde görünür alan dışındaki ön yükleme havuzu küçültülür.
+- Kanal seçimi, kumanda gezinmesi ve oynatma akışı korunur.
+
+Not: Gerçek TV Box üzerinde ölçüm/test yapılmadan kesin FPS veya tamamen takılmasız çalışma garantisi verilmez. Android APK derlemesi bu ortamda yapılmamıştır.
