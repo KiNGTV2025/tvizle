@@ -174,22 +174,36 @@ class NativeVideo(
             val src = vavooSrc
             val gen = proactiveRefreshGen
             if (!loaded || src.isBlank() || !VavooResolver.matches(src)) return
+            // Aşama 1: yeni adresi mevcut yayın sürerken arka planda çöz.
             VavooResolver.resolveAsync(src) { fresh ->
-                handler.post {
-                    if (!loaded || gen != proactiveRefreshGen || src != vavooSrc) return@post
-                    if (fresh != null && fresh != curUrl) {
-                        val p = player ?: return@post
-                        val wasPlaying = p.playWhenReady
-                        val live = p.isCurrentMediaItemLive
-                        val pos = p.currentPosition
-                        curUrl = fresh
-                        p.setMediaSource(buildSource(fresh, VavooResolver.UA_APP, VavooResolver.REFERER, lastKind))
-                        if (!live && pos > 0L) p.seekTo(pos) else p.seekToDefaultPosition()
-                        p.playWhenReady = wasPlaying
-                        p.prepare()
+                if (fresh == null || fresh == curUrl) {
+                    handler.post {
+                        if (loaded && gen == proactiveRefreshGen && src == vavooSrc)
+                            handler.postDelayed(this, if (fresh == null) 10_000L else VAVOO_REFRESH_MS)
                     }
-                    // Çözüm sunucusu geçici hata verirse 30 sn sonra tekrar dene.
-                    handler.postDelayed(this, if (fresh == null) 10_000L else VAVOO_REFRESH_MS)
+                    return@resolveAsync
+                }
+                // Aşama 2: yeni adresin erişilebilirliğini arka planda doğrula.
+                // Kontrol tamamlanmadan çalışan ExoPlayer'ın kaynağına dokunulmaz.
+                VavooResolver.preflightAsync(fresh) { ready ->
+                    handler.post {
+                        if (!loaded || gen != proactiveRefreshGen || src != vavooSrc) return@post
+                        if (ready) {
+                            val p = player ?: return@post
+                            val wasPlaying = p.playWhenReady
+                            val live = p.isCurrentMediaItemLive
+                            val pos = p.currentPosition
+                            curUrl = fresh
+                            p.setMediaSource(buildSource(fresh, VavooResolver.UA_APP, VavooResolver.REFERER, lastKind))
+                            if (!live && pos > 0L) p.seekTo(pos) else p.seekToDefaultPosition()
+                            p.playWhenReady = wasPlaying
+                            p.prepare()
+                            handler.postDelayed(this, VAVOO_REFRESH_MS)
+                        } else {
+                            // Yeni adres henüz hazır değil; mevcut yayın kesilmeden yeniden dene.
+                            handler.postDelayed(this, 10_000L)
+                        }
+                    }
                 }
             }
         }

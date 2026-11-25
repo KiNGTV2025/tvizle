@@ -311,21 +311,34 @@ class GridVideo(
             override fun run() {
                 if (!c.loaded || c.refreshGen != g || cells.getOrNull(i) !== c) return
                 val original = c.src
+                // Aşama 1: yeni Vavoo adresini arka planda çöz.
                 VavooResolver.resolveAsync(original) { fresh ->
-                    handler.post {
-                        if (!c.loaded || c.refreshGen != g || c.src != original || cells.getOrNull(i) !== c) return@post
-                        if (fresh != null && fresh != c.url) {
-                            val p = c.player ?: return@post
-                            val wasPlaying = p.playWhenReady
-                            val live = p.isCurrentMediaItemLive
-                            val pos = p.currentPosition
-                            c.url = fresh; c.ua = VavooResolver.UA_APP; c.ref = VavooResolver.REFERER
-                            p.setMediaSource(buildSource(c, c.kind))
-                            if (!live && pos > 0L) p.seekTo(pos) else p.seekToDefaultPosition()
-                            p.playWhenReady = wasPlaying
-                            p.prepare()
+                    if (fresh == null || fresh == c.url) {
+                        handler.post {
+                            if (c.loaded && c.refreshGen == g && c.src == original && cells.getOrNull(i) === c)
+                                handler.postDelayed(this, if (fresh == null) 10_000L else 4 * 60 * 1000L)
                         }
-                        handler.postDelayed(this, if (fresh == null) 10_000L else 4 * 60 * 1000L)
+                        return@resolveAsync
+                    }
+                    // Aşama 2: yeni adresi doğrula; doğrulanana kadar mevcut player devam eder.
+                    VavooResolver.preflightAsync(fresh) { ready ->
+                        handler.post {
+                            if (!c.loaded || c.refreshGen != g || c.src != original || cells.getOrNull(i) !== c) return@post
+                            if (ready) {
+                                val p = c.player ?: return@post
+                                val wasPlaying = p.playWhenReady
+                                val live = p.isCurrentMediaItemLive
+                                val pos = p.currentPosition
+                                c.url = fresh; c.ua = VavooResolver.UA_APP; c.ref = VavooResolver.REFERER
+                                p.setMediaSource(buildSource(c, c.kind))
+                                if (!live && pos > 0L) p.seekTo(pos) else p.seekToDefaultPosition()
+                                p.playWhenReady = wasPlaying
+                                p.prepare()
+                                handler.postDelayed(this, 4 * 60 * 1000L)
+                            } else {
+                                handler.postDelayed(this, 10_000L)
+                            }
+                        }
                     }
                 }
             }

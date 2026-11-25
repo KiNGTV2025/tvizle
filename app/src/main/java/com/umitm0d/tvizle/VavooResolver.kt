@@ -87,6 +87,37 @@ object VavooResolver {
         }.start()
     }
 
+    /**
+     * İkinci aşama: yeni yayın adresinin erişilebilir olduğunu arka planda kontrol eder.
+     * Sadece küçük bir aralık okunur; mevcut oynatıcıya dokunulmaz.
+     */
+    @JvmStatic
+    fun preflightAsync(streamUrl: String, done: (Boolean) -> Unit) {
+        Thread {
+            val ok = try {
+                val c = open(streamUrl, "GET", 4500)
+                c.setRequestProperty("User-Agent", UA_APP)
+                c.setRequestProperty("Referer", REFERER)
+                c.setRequestProperty("Range", "bytes=0-4095")
+                c.setRequestProperty("Accept", "*/*")
+                try {
+                    val code = c.responseCode
+                    if (code !in 200..206) false else {
+                        val stream = if (code >= 400) c.errorStream else c.inputStream
+                        val sample = stream?.use { input ->
+                            val b = ByteArray(4096)
+                            val n = input.read(b)
+                            if (n > 0) String(b, 0, n, Charsets.UTF_8) else ""
+                        } ?: ""
+                        val head = sample.trimStart().take(80).lowercase(Locale.ROOT)
+                        sample.isNotBlank() && !head.startsWith("<html") && !head.startsWith("<!doctype") && !head.startsWith("{\"error")
+                    }
+                } finally { c.disconnect() }
+            } catch (_: Throwable) { false }
+            done(ok)
+        }.start()
+    }
+
     /** Engelleyici çözüm (ana iş parçacığında ÇAĞIRMAYIN). Başarılıysa önbelleğe de yazar. */
     @JvmStatic
     fun resolveBlocking(src: String): String? {
