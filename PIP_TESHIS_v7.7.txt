@@ -1,1 +1,0 @@
-v7.7: enterPip sonucu (başarı/başarısızlık + sebep) tek yerel Toast ile gösterilir.
