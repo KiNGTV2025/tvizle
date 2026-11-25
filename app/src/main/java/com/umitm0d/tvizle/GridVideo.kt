@@ -129,16 +129,24 @@ class GridVideo(
         val sel = DecoderTweaks.selector { c.preferSw }
         val renderers = DecoderTweaks.renderers(act).setMediaCodecSelector(sel).setEnableDecoderFallback(true)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
-        val lc = DefaultLoadControl.Builder().setBufferDurationsMs(8000, 20000, 1500, 3000).build()
+        val lowEnd = DevicePerformance.isLowEnd(act)
+        val lcBuilder = DefaultLoadControl.Builder().setBufferDurationsMs(
+            if (lowEnd) 6000 else 8000,
+            if (lowEnd) 16000 else 20000,
+            1500,
+            if (lowEnd) 2500 else 3000
+        )
+        if (lowEnd) lcBuilder.setTargetBufferBytes(8 * 1024 * 1024)
+        val lc = lcBuilder.build()
         val p = ExoPlayer.Builder(act, renderers)
             .setLoadControl(lc)
             .setAudioAttributes(androidx.media3.common.AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), false)
             .setHandleAudioBecomingNoisy(true)
             .build()
-        // çok kutuda dekoder yükünü azalt: en fazla 720p
+        // Çoklu ekranda dekoder yükünü azalt. 2 GB TV Box'ta her hücre en fazla 540p.
         p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
-            .setMaxVideoSize(1280, 720)
+            .setMaxVideoSize(if (lowEnd) 960 else 1280, if (lowEnd) 540 else 720)
             .setPreferredAudioLanguage("tr")
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
             .build()
@@ -367,7 +375,11 @@ class GridVideo(
         val c = cells.getOrNull(i) ?: return
         c.loaded = false; c.revealed = false; c.rgen++; c.wgen++; c.bgen++; c.sgen++; c.stgen++; c.refreshGen++
         c.refreshTask?.let { handler.removeCallbacks(it) }; c.refreshTask = null
-        c.player?.let { it.stop(); it.clearMediaItems() }
+        // Durdurulan hücrede yalnızca medyayı temizlemek video decoder/buffer belleğini
+        // tutabilir. Hücre tekrar açıldığında ensurePlayer() yeni, temiz bir oynatıcı kurar.
+        c.player?.let { p -> runCatching { p.release() } }
+        c.player = null
+        c.holder.visibility = View.INVISIBLE
         refresh(c)
     }
 

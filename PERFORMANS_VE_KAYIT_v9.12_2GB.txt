@@ -1,0 +1,34 @@
+ÜmitTV v9.12 — 2 GB TV Box performans optimizasyonu
+
+Hedef
+- Menü/kategori gezinmesi ve canlı yayın oynatımında 2 GB RAM sınıfı TV Box'larda bellek baskısını azaltmak.
+
+Kaynak kodu değişiklikleri
+1) Ana ExoPlayer (ExoConfig.kt)
+- Düşük cihaz tamponu: 20 sn / 75 sn yerine 12 sn / 40 sn.
+- İlk açılış tamponu: 4 sn yerine 2,5 sn.
+- Yeniden tamponlama eşiği: 9 sn yerine 5 sn.
+- Hedef tampon belleği: 32 MiB yerine 24 MiB.
+- Güçlü cihaz profili değiştirilmedi.
+
+2) Çoklu ekran (GridVideo.kt)
+- Düşük cihazda hücre başına tampon: 6 sn / 16 sn; ilk açılış 1,5 sn; yeniden tamponlama 2,5 sn.
+- Düşük cihazda hücre başına hedef tampon: 8 MiB.
+- Düşük cihazda çoklu ekran hücresi video çözünürlüğü üst sınırı: 960x540.
+- Güçlü cihazlarda mevcut 8/20 sn ve 1280x720 ayarı korundu.
+
+3) Çoklu ekran hücresi kapatma
+- Tek hücre durdurulduğunda ExoPlayer yalnızca stop/clear ile tutulmak yerine release edilir.
+- Hücre yeniden açıldığında oynatıcı yeniden oluşturulur; kapalı hücrenin decoder ve tampon belleği boşaltılabilir.
+
+Korunan davranışlar
+- Donanım video hızlandırması kapatılmadı.
+- Ana oynatıcıda çözünürlük zorla düşürülmedi.
+- Vavoo çözümleme, URL yenileme, ses ve uzaktan kumanda akışlarına dokunulmadı.
+- HTML arayüz dosyası değiştirilmedi; v9.12 Lite/TV Box profili aynen korundu.
+
+Doğrulama ve sınırlar
+- ZIP bütünlüğü ve AndroidManifest.xml XML yapısı kontrol edilmelidir.
+- Bu çalışma ortamında Android SDK/Gradle wrapper betiği bulunmadığından APK derlemesi ve gerçek cihaz testi yapılamadı.
+- Bu paket kaynak kodu optimizasyonudur; doğrudan kurulabilir APK değildir.
+- 2 GB RAM cihazda performans; işlemci/GPU, donanım codec desteği, yayın bitrate'i ve ağ kalitesine de bağlıdır. Donmanın tamamen sıfırlanacağı garanti edilemez.
