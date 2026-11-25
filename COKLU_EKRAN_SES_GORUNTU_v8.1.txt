@@ -1,1 +1,0 @@
-v8.1: Çoklu ekran hücreleri tekrar SurfaceView ile açılır (TextureView ses var/görüntü yok yapıyordu; kare gelmezse otomatik TextureView'e geçer). Çoklu ekrandan çıkışta ana yayın sesi zorunlu açılır ve canlı yayın oynatılmaya devam eder.
