@@ -68,6 +68,7 @@ class NativeVideo(
     }
 
     private val handler = Handler(Looper.getMainLooper())
+    private val statusTickMs = if (DevicePerformance.isLowEnd(act)) 750L else TICK_MS
     private var player: ExoPlayer? = null
     private val holder = FrameLayout(act)
     private val surface = SurfaceView(act)
@@ -105,7 +106,7 @@ class NativeVideo(
     private var retries = 0
     private var curUrl = ""
     /** Kayıt için: oynatıcının şu an kullandığı (çözülmüş) adres ve başlıkları. */
-    fun recSource(): Array<String> = arrayOf(curUrl, lastUa, lastRef)
+    fun recSource(): Array<String> = arrayOf(curUrl, lastUa, lastRef, vavooSrc)
     val isPlayingForPip: Boolean get() = loaded && (player?.isPlaying == true || player?.playWhenReady == true)
     // PiP için yalnızca isPlaying'e bağlı kalma: canlı yayın tamponlarken
     // player BUFFERING durumunda olabilir ama video yüzeyi ve medya kaynağı hazırdır.
@@ -229,7 +230,7 @@ class NativeVideo(
             .setMediaCodecSelector(codecSelector)
             .setEnableDecoderFallback(true)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
-        val loadControl = ExoConfig.loadControl()   // harici oynatıcıyla aynı tampon ayarı
+        val loadControl = ExoConfig.loadControl(act)   // harici oynatıcıyla aynı tampon ayarı
         val p = ExoPlayer.Builder(act, renderers)
             .setLoadControl(loadControl)
             .setAudioAttributes(AudioAttributes.Builder()
@@ -790,7 +791,7 @@ class NativeVideo(
             pushState()
             checkFirstFrame()
             if ((vavooMidRetries > 0 || vavooRetried) && readyStableAt != 0L && android.os.SystemClock.elapsedRealtime() - readyStableAt > 30000L) { vavooMidRetries = 0; vavooRetried = false }
-            handler.postDelayed(this, TICK_MS)
+            handler.postDelayed(this, statusTickMs)
         }
     }
 

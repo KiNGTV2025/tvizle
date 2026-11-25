@@ -663,7 +663,7 @@ class PlayerActivity : Activity() {
             .setEnableDecoderFallback(true)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
         val extractors = ExoConfig.extractors()
-        val loadControl = ExoConfig.loadControl()
+        val loadControl = ExoConfig.loadControl(this)
         val p = ExoPlayer.Builder(this, renderers)
             .setLoadControl(loadControl)
             .setMediaSourceFactory(
