@@ -686,7 +686,15 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         // ── Canlı yayın kaydı (yerel): ExoPlayer'ın oynattığı adresi dosyaya indirir ──
         private val recDir by lazy { (getExternalFilesDir("kayitlar") ?: java.io.File(filesDir, "kayitlar")).also { it.mkdirs() } }
         private val rec by lazy { Recorder(recDir) { nv.recSource() } }
-        private fun recOk(): Boolean = isTrustedUrl(web.url)
+        /** WebView.getUrl() yalnızca UI thread'inde güvenli; JS köprüsü ayrı thread'de çalıştığından
+         *  güven denetimi UI thread'inde yapılır (aksi halde kayıt başlatılamıyordu). */
+        private fun recOk(): Boolean {
+            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) return pageTrusted()
+            val res = java.util.concurrent.atomic.AtomicBoolean(false)
+            val latch = java.util.concurrent.CountDownLatch(1)
+            runOnUiThread { try { res.set(pageTrusted()) } catch (_: Exception) {} finally { latch.countDown() } }
+            return try { latch.await(1500, java.util.concurrent.TimeUnit.MILLISECONDS) && res.get() } catch (_: Exception) { false }
+        }
         @JavascriptInterface fun recSupported(): Boolean = true
         /** Başladıysa dosya adı, değilse boş metin döner. */
         @JavascriptInterface

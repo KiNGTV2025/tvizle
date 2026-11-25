@@ -104,7 +104,7 @@ class NativeVideo(
     private var loaded = false           // bir kaynak yüklü mü (sayfa şeffaflığı / yüzey görünürlüğü için)
     private var everReady = false
     private var retries = 0
-    private var curUrl = ""
+    @Volatile private var curUrl = ""
     /** Kayıt için: oynatıcının şu an kullandığı (çözülmüş) adres ve başlıkları. */
     fun recSource(): Array<String> = arrayOf(curUrl, lastUa, lastRef, vavooSrc)
     val isPlayingForPip: Boolean get() = loaded && (player?.isPlaying == true || player?.playWhenReady == true)
@@ -151,7 +151,7 @@ class NativeVideo(
     }
     private var fitMode = "contain"
     private var altTried = false
-    private var lastUa = ""; private var lastRef = ""; private var lastKind = ""
+    @Volatile private var lastUa = ""; @Volatile private var lastRef = ""; private var lastKind = ""
     private var videoRatio = 0f
     private var dropped = 0
     private var volume = 1f
@@ -162,7 +162,7 @@ class NativeVideo(
 
     // Vavoo: sayfanın verdiği adres Vavoo ise gerçek yayın adresine çevrilir (VavooResolver)
     private var resolveGen = 0            // eski/iptal edilmiş çözümlemelerin sonucunu yok saymak için
-    private var vavooSrc = ""             // sayfadan gelen özgün Vavoo adresi ("" = Vavoo değil)
+    @Volatile private var vavooSrc = ""             // sayfadan gelen özgün Vavoo adresi ("" = Vavoo değil)
     private var vavooRetried = false      // yayın hiç açılmazsa bir kez adresi yeniden çözdür
     private var vavooMidRetries = 0       // oynarken kopmada sessiz yeniden çözme sayısı (kararlı oynayınca sıfırlanır)
     private var readyStableAt = 0L
