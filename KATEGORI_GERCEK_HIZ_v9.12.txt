@@ -1,0 +1,9 @@
+ÜMİTTV 9.12 – KATEGORİ VE GERÇEK HIZ GÖSTERİMİ
+
+1) Canlı TV sekmesinin yanına ayrı Kategoriler düğmesi eklendi.
+2) Kategoriler düğmesi canlı moda geçer, kategori görünümünü açar ve kumanda odağını kategori listesine taşır.
+3) Telefon/TV kategori adları tam metin olarak satır kaydırır; dar alanda kesilmez.
+4) Hız rozetine dokunma/Enter/OK ile mevcut Cloudflare hız testi ayarları açılır.
+5) Son 7 gün içinde yapılmış gerçek Cloudflare indirme testi varsa rozet bu ölçümü SON TEST olarak gösterir. Test yoksa mevcut HLS bant genişliği tahmini YAYIN etiketiyle gösterilir; böylece yayın segment hızı internet hız testi gibi sunulmaz.
+
+Not: Cloudflare testi kullanıcı tarafından başlatılır; veri tüketebilir. APK derlemesi ve gerçek Android TV/TV Box kumanda testi bu pakette yapılmamıştır.
