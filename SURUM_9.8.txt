@@ -1,7 +1,0 @@
-ÜMITTV 9.8 — MOBİL KATEGORİ EKRANI
-
-- Telefon ve tablet arayüzünde kanal paneli açıldığında kategori adları tam genişlikte, dikey listede gösterilir.
-- Bir kategoriye dokunulduğunda o kategorinin kanal listesi açılır.
-- Kanal listesinin üstünde Kategoriler geri düğmesi ve seçili kategori adı bulunur.
-- TV Box kumanda arayüzü ve masaüstü yan kategori menüsü korunmuştur.
-- Mevcut kanal filtreleme, favoriler, son izlenenler, kilitli kategori ve özel kategori davranışları korunmuştur.
