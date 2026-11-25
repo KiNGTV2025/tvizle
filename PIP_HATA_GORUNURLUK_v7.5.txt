@@ -1,1 +1,0 @@
-v7.5: PiP hatası artık yerel Android Toast + gecikmeli sayfa toast'u ile gösterilir (eski sayfa mesajı eziyordu); FEATURE_PICTURE_IN_PICTURE ve durum kontrolleri eklendi.
