@@ -1,1 +1,0 @@
-v7.9: enterPip JS köprü thread'inde web.url okuyordu (WebView yalnızca UI thread'inde güvenli) -> güven denetimi başarısız oluyor, düğme PiP başlatamıyordu. Denetim ve PiP çağrısı UI thread'ine taşındı.
