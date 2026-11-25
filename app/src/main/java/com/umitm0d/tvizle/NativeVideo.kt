@@ -64,7 +64,7 @@ class NativeVideo(
         private const val MAX_SILENT_RETRIES = 6      // oynarken kopmada sayfaya hata gitmeden önce sessiz deneme sayısı
         private const val MAX_RESOLVE_TRIES = 3       // Vavoo çözümü başarısızsa sayfaya hata vermeden önce deneme sayısı
         private const val MAX_MID_RESOLVES = 3        // oynarken hata sonrası yeniden çözme hakkı
-        private const val VAVOO_REFRESH_MS = 6 * 60 * 1000L // yaklaşık 8 dk imza süresinden önce yenile
+        private const val VAVOO_REFRESH_MS = 4 * 60 * 1000L // 5 dk civarı imza süresi dolmadan 1 dk önce yenile
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -187,10 +187,9 @@ class NativeVideo(
                         if (!live && pos > 0L) p.seekTo(pos) else p.seekToDefaultPosition()
                         p.playWhenReady = wasPlaying
                         p.prepare()
-                        send(JSONObject().put("t", "dbg").put("m", "Yayın adresi kesinti öncesi yenilendi"))
                     }
                     // Çözüm sunucusu geçici hata verirse 30 sn sonra tekrar dene.
-                    handler.postDelayed(this, if (fresh == null) 30_000L else VAVOO_REFRESH_MS)
+                    handler.postDelayed(this, if (fresh == null) 10_000L else VAVOO_REFRESH_MS)
                 }
             }
         }

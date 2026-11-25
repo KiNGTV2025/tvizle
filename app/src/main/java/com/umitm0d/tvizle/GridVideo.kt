@@ -324,15 +324,14 @@ class GridVideo(
                             if (!live && pos > 0L) p.seekTo(pos) else p.seekToDefaultPosition()
                             p.playWhenReady = wasPlaying
                             p.prepare()
-                            send(i, JSONObject().put("t", "dbg").put("m", "Yayın adresi kesinti öncesi yenilendi"))
                         }
-                        handler.postDelayed(this, if (fresh == null) 30_000L else 6 * 60 * 1000L)
+                        handler.postDelayed(this, if (fresh == null) 10_000L else 4 * 60 * 1000L)
                     }
                 }
             }
         }
         c.refreshTask = task
-        handler.postDelayed(task, 6 * 60 * 1000L)
+        handler.postDelayed(task, 4 * 60 * 1000L)
     }
 
     private fun startSource(c: Cell, url: String, ua: String, ref: String) {
