@@ -11,29 +11,74 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.URI
 import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Vavoo HLS için sabit yerel URL.
- * ExoPlayer aynı MediaSource'u oynatmaya devam eder; Vavoo imzalı adresi değişince
- * yalnızca kök playlist'in arka uç adresi güncellenir. Playlist/segment/key URL'leri
- * yerel proxy üzerinden geçirilir ve playlist URI'leri mutlak upstream URL'lere çevrilir.
+ * Vavoo HLS için KESİNTİSİZ yerel proxy (v9.6).
+ *
+ * ExoPlayer yalnızca sabit yerel adresleri görür:
+ *   /root.m3u8       → kök playlist (master ya da doğrudan media playlist)
+ *   /p/v<n>.m3u8     → master içindeki n. varyant (sabit takma ad; upstream adresi değişse de aynı kalır)
+ *   /p/m<n>.m3u8     → master içindeki n. ses/altyazı/I-frame playlist'i
+ *   /u/<base64>      → segment, anahtar, init parçası
+ *
+ * Eski sürümde yalnızca kök adres güncelleniyordu; ExoPlayer'ın yoklamakta olduğu alt playlist ve segment
+ * adresleri eski imzada kalıyor, imza dolunca 403 gelip oynatıcı baştan kuruluyordu ("yenileme").
+ * Burada:
+ *  - alt playlist adresleri sabit takma adlarla verilir, gerçek adres proxy içinde tutulur;
+ *  - upstream 401/403/404/410 verirse proxy kendi içinde adresi yeniler (hazır bekleyen adres varsa anında),
+ *    isteği yeni adresle tekrarlar; ExoPlayer hatayı hiç görmez;
+ *  - süresi dolmuş imzalı segment adresi, güncel playlist'teki aynı dosya adıyla yeni adrese çevrilir;
+ *  - kısa ağ kopmalarında (zaman aşımı / 5xx) hızlı tekrar denenir, olmazsa son iyi playlist bir süre sunulur;
+ *  - upstream bağlantıları havuzda tutulur (her istekte yeni TLS el sıkışması yok → zayıf cihazda gecikme azalır).
  */
-class VavooHlsProxy private constructor(initialUrl: String, private val ua: String, private val referer: String) {
+class VavooHlsProxy private constructor(
+    initialUrl: String,
+    private val ua: String,
+    private val referer: String,
+    private val renewer: (() -> String?)?
+) {
     @Volatile private var originUrl: String = initialUrl
+    @Volatile private var standbyUrl: String? = null
     private val closed = AtomicBoolean(false)
     private val server = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
+    private val localBase = "http://127.0.0.1:${server.localPort}"
     private val workers = Executors.newCachedThreadPool { r -> Thread(r, "VavooHlsProxy-Worker").apply { isDaemon = true } }
     private val acceptThread = Thread({ acceptLoop() }, "VavooHlsProxy-Accept").apply { isDaemon = true }
 
-    val localUrl: String = "http://127.0.0.1:${server.localPort}/root.m3u8"
+    // "v0","m1" → mutlak upstream playlist adresi (master'dan)
+    private val variants = ConcurrentHashMap<String, String>()
+    // segment dosya adı → hangi playlist anahtarından geldi (süresi dolan segment adresini yeniden bulmak için)
+    private val segOwner = ConcurrentHashMap<String, String>()
+    private class Cached(val body: ByteArray, val at: Long)
+    private val lastPlaylist = ConcurrentHashMap<String, Cached>()
+    private val renewLock = Any()
+    @Volatile private var lastRenewAt = 0L
+
+    val localUrl: String = "$localBase/root.m3u8"
 
     init { acceptThread.start() }
 
+    /** Yeni oturum: kök adres değişir, öğrenilmiş alt playlist/önbellek temizlenir. */
     fun updateOrigin(url: String) {
-        if (!closed.get() && url.startsWith("http", true)) originUrl = url
+        if (closed.get() || !url.startsWith("http", true)) return
+        originUrl = url
+        standbyUrl = null
+        variants.clear(); segOwner.clear(); lastPlaylist.clear()
     }
+
+    /**
+     * Hazır bekleyen yeni adres. Oynatma SIRASINDA KULLANILMAZ (canlı akışı bozmaz);
+     * yalnızca upstream hata verdiğinde anında devreye girer.
+     */
+    fun setStandby(url: String) {
+        if (!closed.get() && url.startsWith("http", true) && url != originUrl) standbyUrl = url
+    }
+
+    /** Dışarıdan (oynatıcı hata verdiğinde) zorla yenileme. Arka plan iş parçacığından çağırın. */
+    fun forceRenew(): Boolean { lastRenewAt = 0L; return renew() }
 
     fun close() {
         if (!closed.compareAndSet(false, true)) return
@@ -46,13 +91,15 @@ class VavooHlsProxy private constructor(initialUrl: String, private val ua: Stri
             try {
                 val socket = server.accept()
                 socket.tcpNoDelay = true
-                socket.soTimeout = 25_000
+                socket.soTimeout = 60_000
                 workers.execute { handle(socket) }
             } catch (_: Throwable) {
                 if (!closed.get()) continue else break
             }
         }
     }
+
+    // ───────────── İstek işleme ─────────────
 
     private fun handle(socket: Socket) {
         socket.use { client ->
@@ -73,103 +120,312 @@ class VavooHlsProxy private constructor(initialUrl: String, private val ua: Stri
                 }
                 if (method != "GET" && method != "HEAD") { respond(output, 405, "Method Not Allowed", ByteArray(0)); return }
 
-                val target = when {
-                    path == "/root.m3u8" -> originUrl
-                    path.startsWith("/u/") -> decodeUrl(path.removePrefix("/u/"))
-                    else -> null
-                }
-                if (target.isNullOrBlank() || !target.startsWith("http", true)) {
-                    respond(output, 404, "Not Found", ByteArray(0)); return
-                }
-
-                val upstream = (URL(target).openConnection() as HttpURLConnection).apply {
-                    requestMethod = method
-                    connectTimeout = 8000
-                    readTimeout = 20000
-                    instanceFollowRedirects = true
-                    setRequestProperty("User-Agent", ua.ifBlank { ExoConfig.DEFAULT_UA })
-                    if (referer.isNotBlank()) setRequestProperty("Referer", referer)
-                    setRequestProperty("Accept", "*/*")
-                    setRequestProperty("Accept-Encoding", "identity")
-                    headers["range"]?.let { setRequestProperty("Range", it) }
-                    headers["if-range"]?.let { setRequestProperty("If-Range", it) }
-                }
-                try {
-                    val code = upstream.responseCode
-                    val stream = if (code >= 400) upstream.errorStream else upstream.inputStream
-                    if (method == "HEAD") {
-                        writeHeaders(output, code, reason(code), upstream.contentType ?: "application/octet-stream", upstream.contentLengthLong, null, upstream.getHeaderField("Content-Range"))
-                        return
+                when {
+                    path == "/root.m3u8" -> servePlaylist("root", method, output)
+                    path.startsWith("/p/") -> servePlaylist(path.removePrefix("/p/").removeSuffix(".m3u8"), method, output)
+                    path.startsWith("/u/") -> {
+                        val target = decodeUrl(path.removePrefix("/u/"))
+                        if (target.isNullOrBlank() || !target.startsWith("http", true)) respond(output, 404, "Not Found", ByteArray(0))
+                        else serveSegment(method, target, headers, output)
                     }
-                    if (stream == null) {
-                        respond(output, code, reason(code), ByteArray(0)); return
-                    }
-                    val bufferedStream = BufferedInputStream(stream)
-                    bufferedStream.mark(16)
-                    val prefix = ByteArray(7)
-                    val prefixCount = bufferedStream.read(prefix)
-                    bufferedStream.reset()
-                    val startsAsPlaylist = prefixCount > 0 && String(prefix, 0, prefixCount, Charsets.UTF_8).trimStart().startsWith("#EXTM3U")
-                    val isPlaylist = startsAsPlaylist || (upstream.contentType ?: "").contains("mpegurl", true) ||
-                        (upstream.contentType ?: "").contains("m3u", true) || target.substringBefore('?').endsWith(".m3u8", true)
-                    if (isPlaylist) {
-                        val body = readLimited(bufferedStream, 2 * 1024 * 1024)
-                        val text = body.toString(Charsets.UTF_8)
-                        if (text.trimStart().startsWith("#EXTM3U")) {
-                            val rewritten = rewritePlaylist(text, upstream.url.toString()).toByteArray(Charsets.UTF_8)
-                            writeHeaders(output, code, reason(code), "application/vnd.apple.mpegurl", rewritten.size.toLong(), null)
-                            output.write(rewritten); output.flush()
-                        } else {
-                            writeHeaders(output, code, reason(code), upstream.contentType ?: "application/octet-stream", body.size.toLong(), null)
-                            output.write(body); output.flush()
-                        }
-                    } else {
-                        val length = upstream.contentLengthLong
-                        val type = upstream.contentType ?: "application/octet-stream"
-                        writeHeaders(output, code, reason(code), type, length, if (length < 0) "chunked" else null, upstream.getHeaderField("Content-Range"))
-                        val buffer = ByteArray(32 * 1024)
-                        while (true) {
-                            val n = bufferedStream.read(buffer)
-                            if (n < 0) break
-                            if (length < 0) {
-                                output.write(Integer.toHexString(n).toByteArray(Charsets.US_ASCII))
-                                output.write("\r\n".toByteArray(Charsets.US_ASCII))
-                                output.write(buffer, 0, n)
-                                output.write("\r\n".toByteArray(Charsets.US_ASCII))
-                            } else output.write(buffer, 0, n)
-                            output.flush()
-                        }
-                        if (length < 0) { output.write("0\r\n\r\n".toByteArray(Charsets.US_ASCII)); output.flush() }
-                        Unit
-                    }
-                } finally { upstream.disconnect() }
+                    else -> respond(output, 404, "Not Found", ByteArray(0))
+                }
             } catch (_: Throwable) {
                 runCatching { respond(BufferedOutputStream(client.getOutputStream()), 502, "Bad Gateway", ByteArray(0)) }
             }
         }
     }
 
-    private fun rewritePlaylist(body: String, baseUrl: String): String {
-        fun proxy(uri: String): String {
-            val raw = uri.trim()
-            if (raw.isEmpty() || raw.startsWith("data:", true) || raw.startsWith("skd:", true)) return uri
-            return try {
-                val absolute = URI(baseUrl).resolve(raw).toString()
-                if (!absolute.startsWith("http://", true) && !absolute.startsWith("https://", true)) uri
-                else "http://127.0.0.1:${server.localPort}/u/" + encodeUrl(absolute)
-            } catch (_: Throwable) { uri }
-        }
-        val uriAttr = Regex("URI=\"([^\"]+)\"")
-        return body.lineSequence().joinToString("\n") { line ->
-            val trimmed = line.trim()
-            if (trimmed.isEmpty()) line
-            else if (!trimmed.startsWith("#")) proxy(trimmed)
-            else uriAttr.replace(line) { m -> "URI=\"${proxy(m.groupValues[1])}\"" }
+    // ───────────── Playlist ─────────────
+
+    private class PlRes(val code: Int, val text: String?, val finalUrl: String)
+
+    private fun targetFor(key: String): String? {
+        if (key == "root") return originUrl
+        variants[key]?.let { return it }
+        // alt playlist adresi henüz öğrenilmediyse (ör. yeni oturum) master'ı bir kez çekip öğren
+        val r = fetchPlaylist(originUrl)
+        val t = r.text
+        if (t != null && t.contains("#EXT-X-STREAM-INF")) rewriteMaster(t, r.finalUrl)
+        return variants[key]
+    }
+
+    private fun fetchPlaylist(target: String): PlRes {
+        val u = open(target, "GET", emptyMap()) ?: return PlRes(0, null, target)
+        return try {
+            if (u.code !in 200..299 || u.stream == null) {
+                val code = u.code
+                release(u, false)
+                PlRes(code, null, u.finalUrl)
+            } else {
+                val body = readLimited(BufferedInputStream(u.stream), 2 * 1024 * 1024)
+                release(u, true)
+                PlRes(u.code, body.toString(Charsets.UTF_8), u.finalUrl)
+            }
+        } catch (_: Throwable) {
+            release(u, false)
+            PlRes(0, null, target)
         }
     }
 
-    private fun encodeUrl(value: String): String = android.util.Base64.encodeToString(value.toByteArray(Charsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-    private fun decodeUrl(value: String): String? = try { String(Base64.decode(value, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING), Charsets.UTF_8) } catch (_: Throwable) { null }
+    private fun servePlaylist(key: String, method: String, out: BufferedOutputStream) {
+        var renewed = false
+        var lastCode = 0
+        for (attempt in 0 until 4) {
+            val target = targetFor(key) ?: break
+            val r = fetchPlaylist(target)
+            lastCode = r.code
+            val text = r.text
+            if (text != null && text.trimStart().startsWith("#EXTM3U")) {
+                val body = (if (text.contains("#EXT-X-STREAM-INF")) rewriteMaster(text, r.finalUrl) else rewriteMedia(key, text, r.finalUrl))
+                    .toByteArray(Charsets.UTF_8)
+                lastPlaylist[key] = Cached(body, System.currentTimeMillis())
+                sendPlaylist(out, method, body)
+                return
+            }
+            if (!renewed && r.code in AUTH_CODES) {
+                // imza/adres bayatladı: proxy içinde yenile, ExoPlayer hatayı görmesin
+                renewed = true
+                renew()
+                continue
+            }
+            if (r.code == 0 || r.code >= 500 || r.code == 429 || r.code in AUTH_CODES) {
+                try { Thread.sleep(300L * (attempt + 1)) } catch (_: InterruptedException) { return }
+                continue
+            }
+            break
+        }
+        // Upstream şu an cevap vermiyor: son iyi playlist'i kısa süre sun (oynatıcı tamponla devam eder, tekrar yoklar)
+        val stale = lastPlaylist[key]
+        if (stale != null && System.currentTimeMillis() - stale.at < STALE_PLAYLIST_MS) {
+            sendPlaylist(out, method, stale.body)
+            return
+        }
+        val code = if (lastCode in 400..599) lastCode else 502
+        respond(out, code, reason(code), ByteArray(0))
+    }
+
+    private fun sendPlaylist(out: BufferedOutputStream, method: String, body: ByteArray) {
+        writeHeaders(out, 200, "OK", "application/vnd.apple.mpegurl", body.size.toLong(), null)
+        if (method != "HEAD") out.write(body)
+        out.flush()
+    }
+
+    private fun resolveUri(base: String, raw: String): String? {
+        val t = raw.trim()
+        if (t.isEmpty() || t.startsWith("data:", true) || t.startsWith("skd:", true)) return null
+        return try {
+            val abs = URI(base).resolve(t).toString()
+            if (abs.startsWith("http://", true) || abs.startsWith("https://", true)) abs else null
+        } catch (_: Throwable) { null }
+    }
+
+    private fun proxyAbs(base: String, raw: String): String {
+        val abs = resolveUri(base, raw) ?: return raw
+        return "$localBase/u/" + encodeUrl(abs)
+    }
+
+    /** Master: varyant ve ses/altyazı playlist adreslerini sabit takma adlara çevirir, gerçek adresleri kaydeder. */
+    private fun rewriteMaster(body: String, base: String): String {
+        var vi = 0
+        var mi = 0
+        var expectVariant = false
+        val sb = StringBuilder(body.length + 256)
+        for (line in body.lineSequence()) {
+            val t = line.trim()
+            when {
+                t.isEmpty() -> sb.append(line)
+                t.startsWith("#EXT-X-STREAM-INF") -> { expectVariant = true; sb.append(line) }
+                t.startsWith("#") -> {
+                    val playlistTag = t.startsWith("#EXT-X-MEDIA:") || t.startsWith("#EXT-X-I-FRAME-STREAM-INF:")
+                    sb.append(URI_ATTR.replace(line) { m ->
+                        val raw = m.groupValues[1]
+                        if (playlistTag) {
+                            val abs = resolveUri(base, raw)
+                            if (abs == null) m.value else {
+                                val k = "m" + (mi++)
+                                variants[k] = abs
+                                "URI=\"$localBase/p/$k.m3u8\""
+                            }
+                        } else "URI=\"" + proxyAbs(base, raw) + "\""
+                    })
+                }
+                expectVariant -> {
+                    expectVariant = false
+                    val abs = resolveUri(base, t)
+                    if (abs == null) sb.append(line) else {
+                        val k = "v" + (vi++)
+                        variants[k] = abs
+                        sb.append("$localBase/p/$k.m3u8")
+                    }
+                }
+                else -> sb.append(proxyAbs(base, t))
+            }
+            sb.append('\n')
+        }
+        return sb.toString()
+    }
+
+    /** Media playlist: segment/anahtar/init adresleri /u/ üzerinden geçer; segment → playlist eşlemesi tutulur. */
+    private fun rewriteMedia(key: String, body: String, base: String): String {
+        if (segOwner.size > 4000) segOwner.clear()
+        val sb = StringBuilder(body.length + 512)
+        for (line in body.lineSequence()) {
+            val t = line.trim()
+            when {
+                t.isEmpty() -> sb.append(line)
+                t.startsWith("#") -> sb.append(URI_ATTR.replace(line) { m -> "URI=\"" + proxyAbs(base, m.groupValues[1]) + "\"" })
+                else -> {
+                    resolveUri(base, t)?.let { segOwner[baseName(it)] = key }
+                    sb.append(proxyAbs(base, t))
+                }
+            }
+            sb.append('\n')
+        }
+        return sb.toString()
+    }
+
+    // ───────────── Adres yenileme ─────────────
+
+    /** Hazır bekleyen adres varsa onu, yoksa renewer ile yeni adresi alıp kök adresi ve alt playlist eşlemesini günceller. */
+    private fun renew(): Boolean {
+        return synchronized(renewLock) renew@{
+            val now = System.currentTimeMillis()
+            if (now - lastRenewAt < RENEW_MIN_GAP_MS) return@renew true   // az önce yenilendi; yeni adresle tekrar denensin
+            lastRenewAt = now
+            var fresh = standbyUrl
+            standbyUrl = null
+            if (fresh == null) fresh = try { renewer?.invoke() } catch (_: Throwable) { null }
+            if (fresh.isNullOrBlank() || !fresh.startsWith("http", true)) return@renew false
+            originUrl = fresh
+            val r = fetchPlaylist(fresh)
+            val t = r.text
+            if (t != null && t.contains("#EXT-X-STREAM-INF")) rewriteMaster(t, r.finalUrl)
+            true
+        }
+    }
+
+    // ───────────── Segment / anahtar ─────────────
+
+    private fun serveSegment(method: String, target: String, reqHeaders: Map<String, String>, out: BufferedOutputStream) {
+        var cur = target
+        var rebased = false
+        var up: Up? = null
+        var failed: Up? = null
+        for (attempt in 0 until 3) {
+            val u = open(cur, method, reqHeaders)
+            if (u != null && u.code < 400) { up = u; break }
+            val code = u?.code ?: 0
+            if (!rebased && code in AUTH_CODES) {
+                // imzalı segment adresi dolmuş: aynı dosyayı güncel playlist'ten yeni adresle bul
+                rebased = true
+                failed?.let { release(it, false) }
+                failed = u
+                val alt = rebaseSegment(cur)
+                if (alt != null && alt != cur) { cur = alt; continue }
+                break
+            }
+            if (code == 0 || code >= 500) {
+                u?.let { release(it, false) }
+                try { Thread.sleep(250L * (attempt + 1)) } catch (_: InterruptedException) { return }
+                continue
+            }
+            failed?.let { release(it, false) }
+            failed = u
+            break
+        }
+        val ok = up
+        if (ok == null) {
+            val f = failed
+            val code = f?.code ?: 502
+            f?.let { release(it, false) }
+            respond(out, code, reason(code), ByteArray(0))
+            return
+        }
+        failed?.let { release(it, false) }
+        var drained = false
+        try {
+            val length = ok.len
+            writeHeaders(out, ok.code, reason(ok.code), ok.type ?: "application/octet-stream", length,
+                if (length < 0 && method != "HEAD") "chunked" else null, ok.range)
+            if (method == "HEAD") { drained = true; return }
+            val stream = ok.stream ?: run { drained = true; return }
+            val buffer = ByteArray(32 * 1024)
+            while (true) {
+                val n = stream.read(buffer)
+                if (n < 0) break
+                if (length < 0) {
+                    out.write(Integer.toHexString(n).toByteArray(Charsets.US_ASCII))
+                    out.write("\r\n".toByteArray(Charsets.US_ASCII))
+                    out.write(buffer, 0, n)
+                    out.write("\r\n".toByteArray(Charsets.US_ASCII))
+                } else out.write(buffer, 0, n)
+                out.flush()
+            }
+            if (length < 0) { out.write("0\r\n\r\n".toByteArray(Charsets.US_ASCII)); out.flush() }
+            drained = true
+        } finally {
+            release(ok, drained)
+        }
+    }
+
+    private fun rebaseSegment(oldUrl: String): String? {
+        val name = baseName(oldUrl)
+        val key = segOwner[name] ?: return null
+        renew()
+        val pl = targetFor(key) ?: return null
+        val r = fetchPlaylist(pl)
+        val text = r.text ?: return null
+        for (line in text.lineSequence()) {
+            val t = line.trim()
+            if (t.isEmpty() || t.startsWith("#")) continue
+            val abs = resolveUri(r.finalUrl, t) ?: continue
+            if (baseName(abs) == name) return abs
+        }
+        return null
+    }
+
+    // ───────────── Upstream bağlantısı ─────────────
+
+    private class Up(
+        val code: Int, val type: String?, val len: Long, val range: String?,
+        val stream: InputStream?, val finalUrl: String, val conn: HttpURLConnection
+    )
+
+    private fun open(target: String, method: String, reqHeaders: Map<String, String>): Up? {
+        return try {
+            val c = URL(target).openConnection() as HttpURLConnection
+            c.requestMethod = method
+            c.connectTimeout = 8000
+            c.readTimeout = 20000
+            c.instanceFollowRedirects = true
+            c.setRequestProperty("User-Agent", ua.ifBlank { ExoConfig.DEFAULT_UA })
+            if (referer.isNotBlank()) c.setRequestProperty("Referer", referer)
+            c.setRequestProperty("Accept", "*/*")
+            c.setRequestProperty("Accept-Encoding", "identity")
+            reqHeaders["range"]?.let { c.setRequestProperty("Range", it) }
+            reqHeaders["if-range"]?.let { c.setRequestProperty("If-Range", it) }
+            val code = c.responseCode
+            val stream = if (method == "HEAD") null else if (code >= 400) c.errorStream else c.inputStream
+            Up(code, c.contentType, c.contentLengthLong, c.getHeaderField("Content-Range"), stream, c.url.toString(), c)
+        } catch (_: Throwable) { null }
+    }
+
+    /** Tamamen okunduysa bağlantı havuza döner (yeniden TLS yok); yarıda kaldıysa kapatılır. */
+    private fun release(u: Up, drained: Boolean) {
+        if (drained) runCatching { u.stream?.close() } else runCatching { u.conn.disconnect() }
+    }
+
+    // ───────────── Yardımcılar ─────────────
+
+    private fun baseName(url: String): String = url.substringBefore('?').substringBefore('#').substringAfterLast('/')
+
+    private fun encodeUrl(value: String): String =
+        Base64.encodeToString(value.toByteArray(Charsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+
+    private fun decodeUrl(value: String): String? = try {
+        String(Base64.decode(value, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING), Charsets.UTF_8)
+    } catch (_: Throwable) { null }
 
     private fun readLine(input: InputStream): String? {
         val bytes = ByteArrayOutputStream()
@@ -217,8 +473,14 @@ class VavooHlsProxy private constructor(initialUrl: String, private val ua: Stri
     }
 
     companion object {
-        fun create(initialUrl: String, ua: String, referer: String): VavooHlsProxy? = try {
-            VavooHlsProxy(initialUrl, ua, referer)
+        private val URI_ATTR = Regex("URI=\"([^\"]+)\"")
+        private val AUTH_CODES = setOf(401, 403, 404, 410)
+        private const val STALE_PLAYLIST_MS = 30_000L   // upstream yokken son iyi playlist bu süre sunulur
+        private const val RENEW_MIN_GAP_MS = 4_000L     // art arda yenileme fırtınasını önler
+
+        /** [renewer]: adres bayatlayınca ARKA PLANDA çağrılır; yeni çözülmüş yayın adresini (ya da null) döndürür. */
+        fun create(initialUrl: String, ua: String, referer: String, renewer: (() -> String?)? = null): VavooHlsProxy? = try {
+            VavooHlsProxy(initialUrl, ua, referer, renewer)
         } catch (_: Throwable) { null }
     }
 }

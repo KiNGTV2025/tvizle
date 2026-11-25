@@ -1,0 +1,46 @@
+ÜmitTV v9.6 – Vavoo canlı yayında "hafif yenileme" düzeltmesi
+
+SORUN
+v9.5 proxy'si yalnızca KÖK playlist adresini güncelliyordu. ExoPlayer ise kök playlist'i bir kez alıp sonra
+alt (media) playlist'i ve segmentleri, o ilk alışta öğrendiği imzalı adreslerle yoklar. Yani "yeni adres"
+oynatıcıya hiç ulaşmıyor, eski imza dolunca 401/403 geliyor, NativeVideo.handleError oynatıcıyı
+setMediaSource ile baştan kuruyordu → birkaç saniyelik hafif yenileme/kopma.
+Ayrıca 3 dakikada bir adres değiştirmek, yeni adres farklı bir sunucudan farklı segment numarasıyla
+gelirse canlı pencerede sıçramaya da yol açabiliyordu.
+
+VAVOO UYGULAMASI (Vavoo_Stream_1.3.8.apk, R2/O.h) NE YAPIYOR
+Oynarken yayın adresini DEĞİŞTİRMİYOR; yalnızca token'ı (ping imzası) en geç ~4 dk'da bir arka planda
+yeniliyor ("renewing it while playing - keeps the stream from being cut").
+
+v9.6 DEĞİŞİKLİKLERİ
+VavooHlsProxy.kt (yeniden yazıldı)
+- Alt playlist adresleri sabit takma adlarla verilir: /p/v0.m3u8, /p/m0.m3u8 ... Gerçek upstream adresleri
+  proxy içinde tutulur; adres değişse de ExoPlayer'ın gördüğü adres değişmez.
+- Upstream 401/403/404/410 verirse proxy KENDİ İÇİNDE adresi yeniler (hazır bekleyen adres varsa anında,
+  yoksa yeniden çözer), isteği yeni adresle tekrarlar. ExoPlayer hatayı görmez.
+- Süresi dolmuş imzalı segment adresi, güncel playlist'te aynı dosya adıyla bulunup yeni adrese çevrilir.
+- Zaman aşımı / 5xx / 429'da hızlı tekrar deneme; upstream tamamen yanıt vermezse son iyi playlist 30 sn
+  boyunca sunulur (oynatıcı tamponla devam eder).
+- Upstream bağlantılar havuzda tutulur (disconnect yerine akış kapatma): her segment/playlist için yeni
+  TLS el sıkışması yok, zayıf cihazda gecikme azalır.
+- Yerel soket zaman aşımı 25 sn → 60 sn.
+
+NativeVideo.kt
+- 3 dk'lık döngü artık ÇALIŞAN yayın adresini değiştirmez. Önce token'ı yeniler (Vavoo uygulaması gibi),
+  sonra taze adresi çözüp ön kontrolden geçirir ve proxy'ye "hazır bekleyen" olarak bırakır.
+- Oynatıcı hata verirse (proxy varken) önce proxy içinde sessiz yenileme + aynı MediaSource ile
+  prepare denenir; setMediaSource/yeniden kurulum yalnızca bunlar yetmezse eski yola düşer.
+
+VavooResolver.kt
+- renewSigBlocking(): token'ı zorla yeniler, başarısızsa eski imzayı korur.
+- resolveFreshBlocking(): önbelleği atlayıp adresi yeniden çözer (imzayı silmez).
+
+DEĞİŞMEYENLER
+Harici PlayerActivity, çoklu ekran (GridVideo), tamponlama/ExoConfig ayarları ve arayüz HTML'i aynı.
+Düz TS (HLS olmayan) kaynaklarda tek oynatıcıyla adresi oynarken değiştirmek mümkün değil; yeni adres hata
+anına kadar bekletilir (v9.5 ile aynı).
+
+DOĞRULAMA DURUMU
+Bu ortamda Kotlin/Android SDK olmadığı için derleme ve cihaz testi yapılamadı; kod elle gözden geçirildi
+(parantez/süslü parantez dengesi orijinalle aynı). Derleme: mevcut GitHub workflow (.github/workflows/build.yml).
+TV'de teşhis için yayın koptuğunda "Yayın koptu (...): sessiz yenileme" bildirimi görünür.
