@@ -1,0 +1,9 @@
+ÜmitTV v9.12
+
+- TV Box kumanda kullanımında kategori listesi ilk ekranda tam adlarıyla gösterilir.
+- OK ile kategori seçildiğinde kanal listesi açılır; geri tuşu kategori listesine döner.
+- Sade arayüz düğmesinin yazısı, rengi ve aria-pressed durumu aç/kapat işlemiyle anında senkronize edilir.
+- v9.11 kayıt arayüzü CSS düzeltmesi korunmuştur; ek CSS ve JS document kapanışından önce, geçerli bloklar içinde yer alır.
+- v9.8 mobil kategori düzeni ve v9.9 Lite/perf iyileştirmeleri proje tabanında korunmuştur.
+
+Not: Android APK derlemesi ve gerçek TV Box testi bu ortamda yapılmamıştır.
