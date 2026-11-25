@@ -1,8 +1,0 @@
-ÜMITTV 9.11 — KAYIT EKRANI CSS DÜZELTMESİ
-
-- Kayıt arayüzü stillerinin yanlış kapanan HTML etiketleri nedeniyle sayfada düz metin olarak görünmesi düzeltildi.
-- Kayıt düğmesi, kayıt durum çubuğu ve kayıt kütüphanesi TV stilleri ayrı ve düzgün kapatılmış style bloklarına alındı.
-- Mobil kategori görünümü ve TV kumanda kategori akışı korundu.
-- 9.10 sürümündeki sade arayüz, kumanda ve Lite özellikleri korundu.
-
-Kontrol: HTML yapısı, JavaScript sözdizimi ve ZIP bütünlüğü kontrol edildi. Android APK derlemesi ve gerçek cihaz testi yapılmadı.
