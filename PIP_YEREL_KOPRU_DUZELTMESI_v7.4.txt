@@ -1,8 +1,0 @@
-PiP düzeltmesi v7.4
-
-Kök neden: "Sistem PiP" düğmesi / vsTogglePip, WebView'in video.requestPictureInPicture() çağrısına düşüyordu.
-Video ExoPlayer ile native SurfaceView'de çizildiği için bu çağrı her zaman başarısız olur ("PiP başlatılamadı").
-- Sayfa: vsTogglePip artık UmitVideo.enterPip() varsa doğrudan yerel yolu kullanır, gerçek hata metnini gösterir.
-- Uygulama (MainActivity): güvenilir sayfa yüklenince PIP_SHIM_JS enjekte edilir; sayfa eski/önbellekte olsa bile
-  requestPictureInPicture() yerel Android PiP'ye yönlendirilir.
-- Sürüm 7.4 (kod 704).
