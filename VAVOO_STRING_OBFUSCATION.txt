@@ -1,1 +1,0 @@
-Vavoo resolver metinleri DEX string havuzunda düz metin kalmayacak şekilde runtime XOR çözümleme ile saklandı. Release derlemesinde mevcut R8 isim karartması da etkin.
