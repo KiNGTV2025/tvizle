@@ -1,10 +1,12 @@
-VAVOO YAYIN YENILEME DUZELTMESI
+ÜMITTV v9.5 ANA PLAYER YENİLEME
 
-- Ana yerel oynatici (NativeVideo) ve coklu ekran hucreleri (GridVideo) icin proaktif adres yenileme eklendi.
-- Vavoo kaynagi baslatildiktan 6 dakika sonra yeni yayin adresi arka planda cozulur.
-- Yeni adres gelirse mevcut canli yayin canli kenardan yeniden baslatilir; VOD ise mevcut oynatma konumu korunur.
-- Cozum sunucusu gecici hata verirse 30 saniye sonra tekrar denenir.
-- Kanal degistirilince / coklu ekran kapatilinca eski yenileme gorevleri iptal edilir.
-- Mevcut hata sonrasi yeniden baglanma mekanizmasi korunmustur.
+- Ana NativeVideo ExoPlayer'da Vavoo HLS için sabit yerel HLS proxy kullanılır.
+- Vavoo adresi 3 dakikada bir arka planda çözülür ve ön kontrolden geçirilir.
+- Yeni adres hazır olduğunda proxy upstream adresi güncellenir; oynatıcıya setMediaSource/prepare uygulanmaz.
+- HLS playlist içindeki segment, alt playlist, şifre anahtarı ve init segment URI'leri proxy üzerinden yönlendirilir.
+- Buffer düşük TV cihazlarında 60 saniye/32 MB, diğer cihazlarda 90 saniye/64 MB hedefe çıkarıldı.
+- HLS canlı hedef gecikmesi 25 saniyeye çıkarıldı (15–60 saniye aralığı).
+- HLS dışı düz TS kaynaklarda tek oynatıcıyla kaynak adresini oynatma sürerken değiştirmek mümkün değildir; yeni adres hata anına kadar bekletilir.
+- Harici PlayerActivity çift oynatıcıya dönüştürülmemiştir; v9.3 tek oynatıcı yapısı korunmuştur.
 
-Not: Bu onleyici yenileme, gozlenen yaklasik 8 dakikalik sureden once (6. dakikada) calisir. Yeni URL'ye geciste oynatici kaynagi yeniden hazirlandigi icin cok kisa bir yeniden tamponlama olabilir; gercek cihazda test edilmeden sifir kesinti garantisi verilemez.
+Mutlak sıfır kesinti garantisi verilmez. Yeni yayın adresinin aynı HLS akışını/segment dizisini sunması ve gerçek cihazda doğrulanması gerekir.

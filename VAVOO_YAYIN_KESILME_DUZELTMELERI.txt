@@ -1,11 +1,9 @@
-Vavoo canlı yayın kararlılığı güncellemeleri
+Vavoo canlı yayın kararlılığı
 
-- HLS canlı yayınlarında hedef canlı gecikmesi 15 saniyeye çıkarıldı; min/max aralık 8-45 saniye.
-- ExoPlayer tamponları artırıldı: 25 sn başlangıç / 75 sn üst tampon / 5 sn başlatma / 12 sn yeniden tamponlama.
-- HTTP bağlantı ve okuma zaman aşımı 12/20 saniyeye çıkarıldı.
-- HLS segmentlerinde geçici 404/410 yanıtlarına daha uzun tolerans eklendi.
-- Vavoo kaynaklarında 401/403/410 yanıtları alındığında bayat URL yerine yayın adresi yeniden çözümleniyor.
-- Aynı canlı yayın ayarları harici oynatıcıya da uygulandı.
+- HTTP bağlantı ve okuma zaman aşımı 12/20 saniyedir.
+- HLS segmentlerinde geçici 404/410 yanıtlarına tolerans bulunur.
+- Vavoo kaynaklarında 401/403/410 yanıtları alındığında bayat URL yerine yayın adresi yeniden çözümlenir.
+- v9.5 ile ana NativeVideo HLS oynatıcıda sabit yerel proxy üzerinden kaynak adresi oynatıcı yeniden başlatılmadan güncellenir.
+- HLS buffer düşük performanslı cihazlarda 60 sn, diğer cihazlarda 90 sn üst sınıra çıkarılmıştır.
 
-Not: Bu ortamda Gradle/Android SDK derleme aracı bulunmadığından APK derlemesi doğrulanamadı.
-Projeyi Android Studio'da açıp Gradle Sync ve assembleDebug ile derleyin.
+Not: Düz TS kaynaklar için aynı proxy tabanlı kesintisiz URL devri uygulanmaz. APK ve gerçek cihaz testi gereklidir.
