@@ -1,9 +1,0 @@
-Vavoo canlı yayın kararlılığı
-
-- HTTP bağlantı ve okuma zaman aşımı 12/20 saniyedir.
-- HLS segmentlerinde geçici 404/410 yanıtlarına tolerans bulunur.
-- Vavoo kaynaklarında 401/403/410 yanıtları alındığında bayat URL yerine yayın adresi yeniden çözümlenir.
-- v9.5 ile ana NativeVideo HLS oynatıcıda sabit yerel proxy üzerinden kaynak adresi oynatıcı yeniden başlatılmadan güncellenir.
-- HLS buffer düşük performanslı cihazlarda 60 sn, diğer cihazlarda 90 sn üst sınıra çıkarılmıştır.
-
-Not: Düz TS kaynaklar için aynı proxy tabanlı kesintisiz URL devri uygulanmaz. APK ve gerçek cihaz testi gereklidir.
