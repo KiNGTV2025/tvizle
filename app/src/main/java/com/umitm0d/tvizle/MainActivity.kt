@@ -573,9 +573,6 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         override fun onPageFinished(v: WebView, url: String?) {
             super.onPageFinished(v, url)
             if (!onTvDevice) v.evaluateJavascript(PIP_SHIM_JS, null)   // TV'de PiP yok; güven denetimi enterPip() içinde yapılır
-            if (onTvDevice && DevicePerformance.isLowEnd(this@MainActivity)) {
-                v.evaluateJavascript("(function(){window.__umitLowEnd=true;document.documentElement.classList.add('umit-lowend-tv','perf-lite','umit-vidlean','umit-hd-lean');})();", null)
-            }
             if (NATIVE_MAIN_PLAYER && url != null && url.startsWith(REMOTE_URL)) v.evaluateJavascript(HOOK_JS, null)
         }
         override fun onPageStarted(v: WebView, url: String?, favicon: android.graphics.Bitmap?) {
@@ -685,7 +682,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
         // ── Canlı yayın kaydı (yerel): ExoPlayer'ın oynattığı adresi dosyaya indirir ──
         private val recDir by lazy { (getExternalFilesDir("kayitlar") ?: java.io.File(filesDir, "kayitlar")).also { it.mkdirs() } }
-        private val rec by lazy { Recorder(recDir) { nv.recSource() } }
+        private val rec by lazy { Recorder(recDir) }
         private fun recOk(): Boolean = isTrustedUrl(web.url)
         @JavascriptInterface fun recSupported(): Boolean = true
         /** Başladıysa dosya adı, değilse boş metin döner. */
@@ -694,7 +691,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             if (!recOk()) return ""
             val s = nv.recSource()
             if (!(s[0].startsWith("http://") || s[0].startsWith("https://"))) return ""
-            return rec.start(s[0], s[1], s[2], s.getOrElse(3) { "" })
+            return rec.start(s[0], s[1], s[2])
         }
         @JavascriptInterface fun recStop(): String = if (recOk()) rec.stop() else "{}"
         @JavascriptInterface fun recStat(): String = if (recOk()) rec.stat() else "{}"
@@ -712,7 +709,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 if (Build.VERSION.SDK_INT >= 29) {
                     val cv = android.content.ContentValues().apply {
                         put(android.provider.MediaStore.Downloads.DISPLAY_NAME, name)
-                        put(android.provider.MediaStore.Downloads.MIME_TYPE, when (src.extension.lowercase()) { "mp4" -> "video/mp4"; "ts" -> "video/mp2t"; else -> "application/octet-stream" })
+                        put(android.provider.MediaStore.Downloads.MIME_TYPE, "video/mp2t")
                         put(android.provider.MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
                     }
                     val uri = contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv) ?: return false

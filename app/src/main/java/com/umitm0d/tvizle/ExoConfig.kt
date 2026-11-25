@@ -8,7 +8,6 @@ import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
-import android.content.Context
 
 /**
  * Harici (PlayerActivity) ve ana (NativeVideo) oynatıcının ORTAK ExoPlayer ayarları.
@@ -57,18 +56,7 @@ object ExoConfig {
                 DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS)
         .setConstantBitrateSeekingEnabled(true)
 
-    fun loadControl(context: Context? = null): DefaultLoadControl {
-        val low = context?.let { DevicePerformance.isLowEnd(it) } == true
-        return DefaultLoadControl.Builder()
-            // Zayıf kutularda gereksiz uzun tampon RAM'i tüketip arayüzü öldürmesin.
-            .setBufferDurationsMs(
-                if (low) 12000 else 25000,
-                if (low) 40000 else 75000,
-                if (low) 2500 else 5000,
-                if (low) 5000 else 12000
-            )
-            .setTargetBufferBytes(if (low) 32 * 1024 * 1024 else -1)
-            .setPrioritizeTimeOverSizeThresholds(true)
-            .build()
-    }
+    fun loadControl(): DefaultLoadControl = DefaultLoadControl.Builder()
+        .setBufferDurationsMs(25000, 75000, 5000, 12000)
+        .build()
 }
