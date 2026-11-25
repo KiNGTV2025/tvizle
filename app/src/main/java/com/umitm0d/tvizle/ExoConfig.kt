@@ -60,15 +60,14 @@ object ExoConfig {
     fun loadControl(context: Context? = null): DefaultLoadControl {
         val low = context?.let { DevicePerformance.isLowEnd(it) } == true
         return DefaultLoadControl.Builder()
-            // 2 GB TV Box profili: daha kısa tampon ve daha düşük bellek tavanı.
-            // Ağ dalgalanmasında gereksiz büyük kuyruk biriktirmeden hızlı açılışı korur.
+            // Zayıf kutularda gereksiz uzun tampon RAM'i tüketip arayüzü öldürmesin.
             .setBufferDurationsMs(
-                if (low) 12000 else 30000,
-                if (low) 40000 else 90000,
-                if (low) 2500 else 5000,
-                if (low) 5000 else 12000
+                if (low) 15000 else 30000,
+                if (low) 60000 else 90000,
+                if (low) 3000 else 5000,
+                if (low) 8000 else 12000
             )
-            .setTargetBufferBytes(if (low) 24 * 1024 * 1024 else 64 * 1024 * 1024)
+            .setTargetBufferBytes(if (low) 32 * 1024 * 1024 else 64 * 1024 * 1024)
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
     }

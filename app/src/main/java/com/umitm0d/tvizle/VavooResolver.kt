@@ -118,6 +118,28 @@ object VavooResolver {
         }.start()
     }
 
+    /**
+     * Oynarken token'ı (imzayı) canlı tutar (Vavoo uygulaması da ~4 dk'da bir yeniler). Yayın adresine DOKUNMAZ.
+     * Yenileme başarısız olursa eski imza korunur. Ana iş parçacığında ÇAĞIRMAYIN.
+     */
+    @JvmStatic
+    fun renewSigBlocking(): Boolean {
+        val oldSig = sig
+        val oldExp = sigExp
+        sigExp = 0L
+        sigBlockUntil = 0L
+        val n = try { fetchSig() } catch (_: Throwable) { null }
+        if (n == null) { sig = oldSig; sigExp = oldExp; return false }
+        return true
+    }
+
+    /** Önbelleği atlayıp yayın adresini yeniden çözer; imzayı SİLMEZ (hızlı). Ana iş parçacığında ÇAĞIRMAYIN. */
+    @JvmStatic
+    fun resolveFreshBlocking(src: String): String? {
+        cache.remove(src.trim())
+        return resolveBlocking(src)
+    }
+
     /** Engelleyici çözüm (ana iş parçacığında ÇAĞIRMAYIN). Başarılıysa önbelleğe de yazar. */
     @JvmStatic
     fun resolveBlocking(src: String): String? {
