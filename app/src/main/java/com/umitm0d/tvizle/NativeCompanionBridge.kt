@@ -14,6 +14,8 @@ import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import java.net.HttpURLConnection
+import java.net.URL
 
 /** Native companion services for ÜmitTV's Stremio/Trakt and TV interfaces.
  *  Secrets are encrypted with an Android Keystore AES-GCM key; only the trusted app page can call this bridge. */
@@ -84,6 +86,37 @@ class NativeCompanionBridge(
             (context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
         }.getOrDefault(-1L)
     }
+
+    /** ESPN scoreboard bridge: WebView CORS/network failures are bypassed natively. Only the public ESPN API host is allowed. */
+    @JavascriptInterface fun fetchJson(url: String): String {
+        if (!allowed()) return JSONObject().put("ok", false).put("error", "Güvenli sayfa doğrulanamadı").toString()
+        var conn: HttpURLConnection? = null
+        return try {
+            val parsed = Uri.parse(url)
+            require(parsed.scheme.equals("https", true) && parsed.host.equals("site.api.espn.com", true)) { "İzin verilmeyen veri kaynağı" }
+            require(parsed.path.orEmpty().startsWith("/apis/site/v2/sports/") && parsed.path.orEmpty().endsWith("/scoreboard")) { "Yalnızca skor servisi kullanılabilir" }
+            conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 10000
+                readTimeout = 12000
+                setRequestProperty("Accept", "application/json")
+                setRequestProperty("User-Agent", "UmitTV-Android/10.4")
+                useCaches = true
+            }
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val body = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+            require(body.length <= 2_000_000) { "Yanıt boyutu sınırı aşıldı" }
+            if (code !in 200..299) JSONObject().put("ok", false).put("status", code).put("error", "ESPN HTTP $code").toString()
+            else {
+                JSONObject(body)
+                JSONObject().put("ok", true).put("data", JSONObject(body)).toString()
+            }
+        } catch (e: Exception) {
+            JSONObject().put("ok", false).put("error", (e.message ?: "Bağlantı hatası").take(240)).toString()
+        } finally { conn?.disconnect() }
+    }
+
     @JavascriptInterface fun nativeInfo(): String {
         if (!allowed()) return "{}"
         return JSONObject().put("tv", runCatching { tvDevice() }.getOrDefault(false))
