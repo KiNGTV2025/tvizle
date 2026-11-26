@@ -37,9 +37,18 @@ object DecoderTweaks {
     private fun isSw(i: MediaCodecInfo): Boolean =
         i.softwareOnly || i.name.startsWith("c2.android.") || i.name.startsWith("OMX.google.")
 
-    /** Dekoder sırası: preferSw ise yazılım önce; değilse sağlam donanım → yazılım → bozuk donanım (Allwinner). */
+    /** HER ZAMAN DONANIM: true iken video için yazılım dekoderler (c2.android.*, OMX.google.*, softwareOnly) listeden çıkarılır.
+     *  Yazılım yalnızca o codec için cihazda HİÇ donanım dekoder yoksa son çare olarak kalır (yoksa görüntü hiç açılmaz). */
+    @Volatile var hwOnly: Boolean = true
+
+    /** Dekoder sırası: hwOnly ise yalnızca donanım; preferSw ise yazılım önce; değilse sağlam donanım → yazılım → bozuk donanım (Allwinner). */
     fun sortDecoders(list: List<MediaCodecInfo>, mime: String, preferSw: Boolean): List<MediaCodecInfo> {
         if (!mime.startsWith("video/")) return list
+        if (hwOnly) {
+            val hw = list.filter { i: MediaCodecInfo -> !isSw(i) }
+            if (hw.isNotEmpty()) return hw.sortedBy { i: MediaCodecInfo -> if (demoteAllwinner && isBrokenHw(i.name)) 1 else 0 }
+            return list
+        }
         return if (preferSw) list.sortedBy { i: MediaCodecInfo -> if (isSw(i)) 0 else 1 }
         else list.sortedBy { i: MediaCodecInfo -> if (demoteAllwinner && isBrokenHw(i.name)) 2 else if (isSw(i)) 1 else 0 }
     }

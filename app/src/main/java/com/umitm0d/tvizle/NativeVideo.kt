@@ -238,7 +238,8 @@ class NativeVideo(
     }
 
     // Görüntü gelmeme koruması: ses çalıp ilk video karesi çizilmezse (donanım dekoder sorunu) yazılım dekoderine geç
-    private var preferSw = act.getSharedPreferences("umittv", android.content.Context.MODE_PRIVATE).getString("dec", "") == "sw"   // sw: yazılım dekoder öncelikli (kalıcı tercih ya da donanım hata verince otomatik)
+    private var preferSw = false   // DONANIM ZORUNLU: yazılım dekoder hiçbir zaman öncelikli olmaz (bkz. DecoderTweaks.hwOnly); eski "sw" tercihi yok sayılır
+    private var hwRebuilds = 0   // donanım dekoder çökerse oynatıcıyı yeniden kurma sayısı (yüklemeye başına en çok 2)
     private var decName = ""
     private var lastDiag = ""
     private var firstFrame = false
@@ -458,7 +459,7 @@ class NativeVideo(
         curUrl = url; everReady = false; retries = 0; dropped = 0
         altTried = false; lastUa = ua; lastRef = referer; lastKind = kind
         configureVavooProxy(kind)
-        firstFrame = false; readySince = 0L; swTried = false; hasVideoTrack = false; readyStableAt = 0L; frameFix = 0
+        firstFrame = false; readySince = 0L; swTried = false; hwRebuilds = 0; hasVideoTrack = false; readyStableAt = 0L; frameFix = 0
         levelRefs = emptyList(); audioRefs = emptyList(); videoRatio = 0f
         loaded = true
         if (vavooSrc.isNotBlank() && VavooResolver.matches(vavooSrc)) {
@@ -604,7 +605,7 @@ class NativeVideo(
 
     /** Sayfadan: "sw" = yazılım dekoder öncelikli, "hw" = donanım (varsayılan). Kalıcıdır. */
     fun setDecoder(mode: String) {
-        val sw = mode == "sw"
+        val sw = false   // "sw" isteği yok sayılır: her zaman donanım
         act.getSharedPreferences("umittv", android.content.Context.MODE_PRIVATE).edit().putString("dec", if (sw) "sw" else "hw").apply()
         if (sw == preferSw) return
         preferSw = sw
@@ -876,7 +877,7 @@ class NativeVideo(
                     frameFix = 2; forceTex = true; setTexture(true)
                     send(JSONObject().put("t", "dbg").put("m", "Görüntü yüzeyi TextureView'a alındı"))
                 }
-                else if (preferSw) {
+                else {
                     val f = p.videoFormat
                     send(JSONObject().put("t", "dbg").put("m", "Video çözülemedi: " + (f?.sampleMimeType ?: "?") + " " + (f?.width ?: 0) + "x" + (f?.height ?: 0)))
                     swTried = false; readySince = Long.MAX_VALUE / 2   // tekrar mesaj verme
@@ -897,12 +898,11 @@ class NativeVideo(
         applyFit()
     }
 
-    /** Donanım dekoder görüntü vermediyse: oynatıcıyı yazılım dekoder öncelikli yeniden kur, kaldığı yerden devam et. */
+    /** Donanım dekoder görüntü vermediyse: oynatıcıyı (yine donanım dekoderle) yeniden kur, kaldığı yerden devam et. */
     private fun rebuildSoftware() {
         val old = player ?: return
         val pos = old.currentPosition
         val live = old.isCurrentMediaItemLive
-        preferSw = true
         handler.removeCallbacks(retryRun)
         old.release(); player = null
         val p = ensurePlayer()
@@ -910,7 +910,7 @@ class NativeVideo(
         if (!live && pos > 1000) p.seekTo(pos)
         p.playWhenReady = true
         p.prepare()
-        send(JSONObject().put("t", "dbg").put("m", "Yazılım dekoder deneniyor…"))
+        send(JSONObject().put("t", "dbg").put("m", "Donanım dekoder yeniden başlatılıyor…"))
     }
 
     private val retryRun = Runnable {
@@ -1009,9 +1009,10 @@ class NativeVideo(
             p.seekToDefaultPosition(); p.prepare(); return
         }
         // Donanım dekoder çöktü/başlamadı (4000-4999): sayfaya hata (=logo + kanalı baştan yükle) göndermeden yazılım dekoderine geç
-        if (e.errorCode in 4000..4999 && !preferSw) {
-            send(JSONObject().put("t", "dbg").put("m", "Dekoder hatası (" + e.errorCodeName + "): yazılım dekoder"))
-            rebuildSoftware()
+        if (e.errorCode in 4000..4999 && hwRebuilds < 2) {
+            hwRebuilds++
+            send(JSONObject().put("t", "dbg").put("m", "Dekoder hatası (" + e.errorCodeName + "): donanım dekoder yeniden başlatılıyor"))
+            rebuildSoftware()   // adı eski; artık oynatıcıyı DONANIM dekoderle yeniden kurar
             return
         }
         var hc0 = 0

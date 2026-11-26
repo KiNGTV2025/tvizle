@@ -497,7 +497,7 @@ class GridVideo(
 
     private fun rebuildSoftware(i: Int, c: Cell) {
         val old = c.player ?: return
-        c.preferSw = true
+        // DONANIM ZORUNLU: yazılıma geçilmez; oynatıcı donanım dekoderle yeniden kurulur
         c.player = null
         old.release()
         val p = ensurePlayer(i, c)
