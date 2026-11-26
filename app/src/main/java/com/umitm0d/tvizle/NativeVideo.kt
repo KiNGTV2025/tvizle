@@ -64,7 +64,7 @@ class NativeVideo(
         private const val MAX_SILENT_RETRIES = 6      // oynarken kopmada sayfaya hata gitmeden önce sessiz deneme sayısı
         private const val MAX_RESOLVE_TRIES = 3       // Vavoo çözümü başarısızsa sayfaya hata vermeden önce deneme sayısı
         private const val MAX_MID_RESOLVES = 3        // oynarken hata sonrası yeniden çözme hakkı
-        private const val VAVOO_REFRESH_MS = 3 * 60 * 1000L // Token ≤4 dk'da bir canlı tutulur (Vavoo uygulaması gibi); adres oynarken değiştirilmez
+        private const val VAVOO_REFRESH_MS = 3 * 60 * 1000L // PlaylistRefresh: imza süresinden önce proxy upstream'ini güncelle
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -177,32 +177,38 @@ class NativeVideo(
             val src = vavooSrc
             val gen = proactiveRefreshGen
             if (!loaded || src.isBlank() || !VavooResolver.matches(src)) return
-            // Vavoo uygulaması gibi: oynarken token'ı canlı tut, ÇALIŞAN yayın adresine dokunma.
-            // Yeni adres yalnızca "hazır bekleyen" olarak saklanır; upstream hata verirse proxy anında kullanır.
-            Thread {
-                runCatching { VavooResolver.renewSigBlocking() }
-                val fresh = runCatching { VavooResolver.resolveFreshBlocking(src) }.getOrNull()
+            // Mevcut yayın çalışırken yeni imzalı adresi arka planda çöz.
+            VavooResolver.resolveAsync(src) { fresh ->
                 if (fresh == null || fresh == curUrl) {
                     handler.post {
                         if (loaded && gen == proactiveRefreshGen && src == vavooSrc)
                             handler.postDelayed(this, if (fresh == null) 10_000L else VAVOO_REFRESH_MS)
                     }
-                } else {
-                    VavooResolver.preflightAsync(fresh) { ready ->
-                        handler.post {
-                            if (!loaded || gen != proactiveRefreshGen || src != vavooSrc) return@post
-                            if (ready) {
-                                val proxy = vavooHlsProxy
-                                if (proxy != null) proxy.setStandby(fresh)     // oynatıcıya/proxy kaynağına DOKUNMAZ
-                                else pendingVavooUrl = fresh                    // düz TS: hata anında kullanılır
-                                handler.postDelayed(this, VAVOO_REFRESH_MS)
+                    return@resolveAsync
+                }
+                VavooResolver.preflightAsync(fresh) { ready ->
+                    handler.post {
+                        if (!loaded || gen != proactiveRefreshGen || src != vavooSrc) return@post
+                        if (ready) {
+                            // HLS'de yerel URL sabit kalır. Proxy, yeni master playlist'i arka planda okuyup
+                            // aynı kalite route'larını yeni upstream'e bağlar. ExoPlayer/MediaSource/buffer değişmez.
+                            val proxy = vavooHlsProxy
+                            if (proxy != null) {
+                                proxy.updateOrigin(fresh)
+                                curUrl = fresh
+                                pendingVavooUrl = null
                             } else {
-                                handler.postDelayed(this, 10_000L)
+                                // Düz TS gibi playlist olmayan kaynaklarda tek oynatıcıyla gerçek zamanlı URL
+                                // devri mümkün değildir. Yeni adresi hata anına kadar beklet, çalışan akışı bozma.
+                                pendingVavooUrl = fresh
                             }
+                            handler.postDelayed(this, VAVOO_REFRESH_MS)
+                        } else {
+                            handler.postDelayed(this, 10_000L)
                         }
                     }
                 }
-            }.start()
+            }
         }
     }
 
@@ -221,12 +227,7 @@ class NativeVideo(
         if (vavooSrc.isNotBlank() && VavooResolver.matches(vavooSrc) &&
             (kind == "hls" || curUrl.substringBefore('?').endsWith(".m3u8", true))) {
             if (vavooHlsProxy == null) {
-                val src = vavooSrc
-                vavooHlsProxy = VavooHlsProxy.create(curUrl, lastUa, lastRef) {
-                    // Proxy upstream 401/403/404/410 görürse arka planda taze adres çözer (ExoPlayer hatayı görmeden)
-                    VavooResolver.invalidate(src)
-                    VavooResolver.resolveBlocking(src)
-                }
+                vavooHlsProxy = VavooHlsProxy.create(curUrl, lastUa, lastRef)
             } else {
                 vavooHlsProxy?.updateOrigin(curUrl)
             }
@@ -640,6 +641,8 @@ class NativeVideo(
 
     /** Sayfanın #vid dikdörtgeni (CSS px) → cihaz pikseli. iw/ih: sayfanın window.innerWidth/innerHeight'i. */
     private var rectPend: Runnable? = null
+    private var lastRectApplyAt = 0L
+    private val lowEndRect by lazy { DevicePerformance.isLowEnd(act) }
     private var lastRect: DoubleArray? = null
     /** WebView güncelleme şeridi vb. yüzünden aşağı itildiyse (üst/sol kenar boşluğu) video katmanı da aynı kadar kayar. */
     private fun webOffX(): Int = (web.layoutParams as? ViewGroup.MarginLayoutParams)?.leftMargin ?: 0
@@ -666,6 +669,7 @@ class NativeVideo(
         val nw = (w * sx).toInt().coerceAtLeast(0); val nh = (h * sy).toInt().coerceAtLeast(0)
         val apply = Runnable {
             rectPend = null
+            lastRectApplyAt = android.os.SystemClock.uptimeMillis()
             val lp = holder.layoutParams as FrameLayout.LayoutParams
             if (lp.leftMargin != nx || lp.topMargin != ny || lp.width != nw || lp.height != nh) {
                 lp.gravity = Gravity.TOP or Gravity.START
@@ -679,9 +683,16 @@ class NativeVideo(
         val cur = holder.layoutParams
         // 4K (TextureView): sayfa animasyonu (kanal listesi açılırken) 100 ms'de bir yeni boyut gönderiyor; her biri
         // yerleşim + GPU yeniden çizimi demek ve zayıf kutuda donma yapıyor. Animasyon bitince tek seferde uygula.
+        val nowMs = android.os.SystemClock.uptimeMillis()
         if (useTex && show && cur.width > 0 && cur.height > 0 && nw > 0 && nh > 0) {
             rectPend = apply
             handler.postDelayed(apply, 180)
+        } else if (lowEndRect && show && cur.width > 0 && cur.height > 0 && nw > 0 && nh > 0 &&
+            nowMs - lastRectApplyAt < 120L) {
+            // Zayıf kutu: sayfa animasyonu (liste açılışı, tam ekran geçişi) arka arkaya boyut yollarsa her biri
+            // SurfaceView yeniden yerleşimi demek; art arda gelenleri ~120 ms'de bir uygula (son değer her zaman uygulanır).
+            rectPend = apply
+            handler.postDelayed(apply, 120L - (nowMs - lastRectApplyAt))
         } else apply.run()
     }
 
@@ -910,6 +921,7 @@ class NativeVideo(
         return best
     }
 
+    private val tlWindow = Timeline.Window()
     private fun pushState() {
         val p = player ?: return
         if (!loaded) return
@@ -925,7 +937,7 @@ class NativeVideo(
         if (p.isCurrentMediaItemLive) {
             val tl = p.currentTimeline
             if (!tl.isEmpty) {
-                val w = tl.getWindow(p.currentMediaItemIndex, Timeline.Window())
+                val w = tl.getWindow(p.currentMediaItemIndex, tlWindow)
                 if (w.defaultPositionMs != C.TIME_UNSET) dp = w.defaultPositionMs
             }
         }
@@ -976,17 +988,6 @@ class NativeVideo(
             .put("lv", if (p != null) curLevelIndex(p) else -1).put("fps", fps.toDouble()))
     }
 
-    /** Proxy varsa: oynatıcıyı yeniden kurmadan (aynı MediaSource) adresi proxy içinde yenile, kısa süre sonra aynı kaynağı hazırla. */
-    private fun tryProxyRecover(diag: String): Boolean {
-        val px = vavooHlsProxy ?: return false
-        vavooMidRetries++
-        send(JSONObject().put("t", "dbg").put("m", "Yayın koptu ($diag): sessiz yenileme"))
-        Thread { runCatching { px.forceRenew() } }.start()
-        handler.removeCallbacks(retryRun)
-        handler.postDelayed(retryRun, 1200)
-        return true
-    }
-
     private fun handleError(e: PlaybackException) {
         val p = player ?: return
         if (e.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {   // canlı yayında geride kaldı → canlıya dön
@@ -1006,7 +1007,6 @@ class NativeVideo(
         if (playedOk) {
             // Vavoo imzalı adresinde 401/403/410 geldiyse aynı bayat URL'yi tekrar deneme;
             // önbelleği temizleyip gerçek yayın adresini yeniden çöz.
-            if (vavooSrc.isNotEmpty() && vavooMidRetries < MAX_MID_RESOLVES && tryProxyRecover(diag)) return
             if (vavooSrc.isNotEmpty() && hc0 in setOf(401, 403, 410) &&
                 vavooMidRetries < MAX_MID_RESOLVES) {
                 vavooMidRetries++

@@ -6,7 +6,17 @@ import android.os.Build
 
 /** Hafif profil: eski TV box'larda WebView/ExoPlayer bellek ve efekt yükünü sınırlamak için. */
 object DevicePerformance {
+    @Volatile private var cached: Boolean? = null
+
+    /** Sonuç cihaz için sabittir; ActivityManager/PackageManager sorguları her çağrıda tekrarlanmasın. */
     fun isLowEnd(context: Context): Boolean {
+        cached?.let { return it }
+        val r = compute(context.applicationContext ?: context)
+        cached = r
+        return r
+    }
+
+    private fun compute(context: Context): Boolean {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
         val memory = ActivityManager.MemoryInfo()
         runCatching { am?.getMemoryInfo(memory) }

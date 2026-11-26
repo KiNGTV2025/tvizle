@@ -60,12 +60,12 @@ object ExoConfig {
     fun loadControl(context: Context? = null): DefaultLoadControl {
         val low = context?.let { DevicePerformance.isLowEnd(it) } == true
         return DefaultLoadControl.Builder()
-            // Zayıf kutularda gereksiz uzun tampon RAM'i tüketip arayüzü öldürmesin.
+            // Düşük cihazlarda orta büyüklükte, daha güçlü cihazlarda geniş canlı yayın tamponu.
             .setBufferDurationsMs(
-                if (low) 15000 else 30000,
-                if (low) 60000 else 90000,
-                if (low) 3000 else 5000,
-                if (low) 8000 else 12000
+                if (low) 20000 else 30000,
+                if (low) 75000 else 90000,
+                if (low) 4000 else 5000,
+                if (low) 9000 else 12000
             )
             .setTargetBufferBytes(if (low) 32 * 1024 * 1024 else 64 * 1024 * 1024)
             .setPrioritizeTimeOverSizeThresholds(true)
