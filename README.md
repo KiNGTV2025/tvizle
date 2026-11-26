@@ -14,7 +14,7 @@ Otomatik oluşturuldu
 Not: Bu ortamda Android SDK/Gradle wrapper bulunmadığından APK derlemesi çalıştırılamadı. HTML içindeki 192 satır içi JavaScript bloğu Node.js sözdizimi kontrolünden hatasız geçti. HTML dosyası uzaktaki sayfa olarak sunuluyorsa, PiP düğmesi düzeltmesinin etkili olması için bu HTML'nin de sayfanın barındırıldığı yere yüklenmesi gerekir.
 
 
-## Mert Stream eşdeğer yerel entegrasyonları (26.11.2026)
+##  Stream eşdeğer yerel entegrasyonları (26.11.2026)
 
 - `NativeCompanionBridge.kt` eklendi. HTML modülleri için Android Keystore tabanlı AES-GCM şifreli kalıcı depolama sağlar.
 - Stremio eklenti manifest listesi native şifreli depoya yazılır; Android uygulaması yeniden açıldığında aynı eklentiler korunur.
@@ -23,6 +23,6 @@ Not: Bu ortamda Android SDK/Gradle wrapper bulunmadığından APK derlemesi çal
 - `UmitCompanion` JavaScript arayüzü yalnızca uygulamanın güvenilir HTTPS sayfası açıkken işlem yapar.
 - Uygulama sürümü `10.4` olarak yükseltildi; CI iş akışı bu sürümden yeni APK üretir.
 
-Bu değişiklikler Mert Stream APK'sından kod kopyalamaz; APK'da tespit edilen Stremio, Trakt, spor merkezi ve takvim gibi işlevlerin Ümit TV mimarisinde kullanılabilmesi için yerel altyapı sağlar. ESPN/TMDB/Stremio veri ekranları HTML tarafındadır. Trakt tam OAuth senkronizasyonu, bildirim zamanlayıcısı ve gerçek cihazlar arası senkronizasyon bu pakette henüz tamamlanmış değildir.
+Bu değişiklikler  Stream APK'sından kod kopyalamaz; APK'da tespit edilen Stremio, Trakt, spor merkezi ve takvim gibi işlevlerin Ümit TV mimarisinde kullanılabilmesi için yerel altyapı sağlar. ESPN/TMDB/Stremio veri ekranları HTML tarafındadır. Trakt tam OAuth senkronizasyonu, bildirim zamanlayıcısı ve gerçek cihazlar arası senkronizasyon bu pakette henüz tamamlanmış değildir.
 
 Derleme bu çalışma ortamında çalıştırılmadı (Android SDK/Gradle kurulu değil). GitHub Actions iş akışı Gradle 8.13 + Android SDK/NDK ile APK'yı derlemek üzere yapılandırılmıştır.
