@@ -391,12 +391,19 @@ class NativeVideo(
         // Canlı yayında geçici parça/liste hatası oynatıcıyı düşürmesin: 8 deneme, 1 sn aralıkla (varsayılan 3 deneme, katlanarak artan bekleme)
         // (Eski satır-içi politika sonsuz yeniden denemeye yol açabiliyordu; ortak, sınırlı politika ExoConfig'de.)
         val policy = ExoConfig.loadErrorPolicy()
-        if (low.contains(".m3u8") || kind == "hls") {
-            // Canlı kenara fazla yapışma: Vavoo/CDN parçası gecikince oynatıcı hemen tampon boşaltmasın.
-            // 15 sn hedef gecikme, ağ dalgalanmasında daha geniş toparlanma payı bırakır.
+        val isHls = low.contains(".m3u8") || kind == "hls"
+        if (isHls) {
+            // Vavoo_Stream 1.3.8 ile aynı: özel canlı gecikme hedefi YOK (ExoPlayer playlist'e göre seçer) ve canlı hız
+            // ayarı kapalı (1.0x). Eskiden 25 sn hedef / 0.97-1.03x hız vardı.
             item.setLiveConfiguration(MediaItem.LiveConfiguration.Builder()
-                .setTargetOffsetMs(25000).setMinOffsetMs(15000).setMaxOffsetMs(60000)
-                .setMinPlaybackSpeed(0.97f).setMaxPlaybackSpeed(1.03f).build())
+                .setMinPlaybackSpeed(1f).setMaxPlaybackSpeed(1f).build())
+        }
+        if (isHls && vavooSrc.isNotBlank()) {
+            // Vavoo_Stream HlsMediaSource'u "chunkless preparation" ile kuruyor: ilk parçayı beklemeden playlist'ten başlar.
+            return androidx.media3.exoplayer.hls.HlsMediaSource.Factory(DefaultDataSource.Factory(act, http))
+                .setAllowChunklessPreparation(true)
+                .setLoadErrorHandlingPolicy(policy)
+                .createMediaSource(item.build())
         }
         val factory = DefaultMediaSourceFactory(DefaultDataSource.Factory(act, http), extractors)
         factory.setLoadErrorHandlingPolicy(policy)
