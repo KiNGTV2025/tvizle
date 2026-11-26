@@ -90,9 +90,3 @@
 # için standart uyarıları sustur.
 -dontwarn kotlin.**
 -dontwarn kotlinx.coroutines.**
-
-# ── ÜmitDpi (ByeDPI + hev-socks5-tunnel) — .so içindeki JNI sembolleri/kayıtları bu paket/sınıf adlarına
-#    bağlı; R8 yeniden adlandırırsa UnsatisfiedLinkError olur. ADLARI KORU.
--keep class io.github.romanvht.byedpi.core.** { *; }
--keepclasseswithmembernames class * { native <methods>; }
--keep class com.umitm0d.tvizle.dpi.UmitDpiVpnService { *; }

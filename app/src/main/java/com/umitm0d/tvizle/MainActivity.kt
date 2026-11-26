@@ -66,8 +66,6 @@ import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
-import com.umitm0d.tvizle.dpi.UmitDpi
-import com.umitm0d.tvizle.dpi.UmitDpiBridge
 
 /** ÜmitTV – REMOTE_URL'deki sayfayı tam ekran WebView'de açar (sayfa APK'nın içinde gömülü değil).
  *  v1.1: mikrofon (sesli komut), dosya ekleme, direksiyon tuşlarıyla kanal değiştirme. */
@@ -363,10 +361,6 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         web.addJavascriptInterface(SpeechBridge(), "UmitNative")
         // sayfadaki <video>/hls.js/mpegts.js çağrılarını ExoPlayer'a çeviren köprü (umit_native_video.js kullanır)
         web.addJavascriptInterface(VideoBridge(), "UmitVideo")
-        // ÜmitDpi (ISS engeli aşma: ByeDPI + yerel VPN) — sayfadaki Ayarlar > ÜmitDpi bu köprüyü kullanır
-        web.addJavascriptInterface(UmitDpiBridge(this, UmitDpiBridge.Trust { isTrustedUrl(web.url) }), "UmitDpi")
-        UmitDpi.setListener(UmitDpi.Listener { js -> runOnUiThread { try { web.evaluateJavascript(js, null) } catch (_: Throwable) {} } })
-        UmitDpi.autoStart(this)   // "Uygulama açılınca otomatik aç" seçiliyse (ve VPN izni verilmişse) sessizce başlatır
         web.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(v: WebView, req: WebResourceRequest): Boolean {
                 // (Not: bu istemci onCreate sonunda remoteClient() ile değiştirilir; aynı kurallar orada da uygulanır.)
@@ -988,10 +982,6 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(req: Int, res: Int, data: Intent?) {
-        if (req == UmitDpi.REQ_VPN) {   // ÜmitDpi VPN izin penceresi sonucu
-            UmitDpi.onVpnResult(this, res)
-            return
-        }
         if (req == REQ_FILE) {
             val r = WebChromeClient.FileChooserParams.parseResult(res, data)
             finishFile(r)
@@ -1340,8 +1330,6 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     }
 
     override fun onDestroy() {
-        UmitDpi.setListener(null)
-        if (isFinishing) UmitDpi.onAppExit(this)   // "otomatik" modda uygulamadan çıkınca ÜmitDpi de kapanır
         destroyRecognizer()
         mediaSession?.release(); mediaSession = null
         fileCb?.onReceiveValue(null); fileCb = null
