@@ -359,6 +359,8 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
         // sayfadaki webkitSpeechRecognition → yerel SpeechRecognizer köprüsü (umit_native.js kullanır)
         web.addJavascriptInterface(SpeechBridge(), "UmitNative")
+        // Mert Stream benzeri modüller için yerel güvenli depolama, indirme ve TV cihaz bilgisi.
+        web.addJavascriptInterface(NativeCompanionBridge(this, { trustedForBridge() }, { onTvDevice }), "UmitCompanion")
         // sayfadaki <video>/hls.js/mpegts.js çağrılarını ExoPlayer'a çeviren köprü (umit_native_video.js kullanır)
         web.addJavascriptInterface(VideoBridge(), "UmitVideo")
         web.webViewClient = object : WebViewClient() {
@@ -498,6 +500,15 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
     /** Şu an ekranda duran ana sayfa bize mi ait? (web.url üst çerçevenin adresidir.) */
     private fun pageTrusted(): Boolean = isTrustedUrl(web.url)
+
+    /** JavaScript bridge çağrıları arka plan thread'inde gelir; WebView URL'sini UI thread'inde doğrula. */
+    private fun trustedForBridge(): Boolean {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) return pageTrusted()
+        val result = java.util.concurrent.atomic.AtomicBoolean(false)
+        val latch = java.util.concurrent.CountDownLatch(1)
+        runOnUiThread { try { result.set(pageTrusted()) } catch (_: Exception) {} finally { latch.countDown() } }
+        return try { latch.await(1500, java.util.concurrent.TimeUnit.MILLISECONDS) && result.get() } catch (_: Exception) { false }
+    }
 
     /** PiP ve izinler için adresi yol önekiyle değil, HTTPS + tam host eşleşmesiyle doğrula.
      * WebView yönlendirme, son slash veya sorgu parametresi nedeniyle URL yolu değişebilir;
