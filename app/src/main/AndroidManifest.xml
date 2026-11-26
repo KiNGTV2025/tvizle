@@ -3,6 +3,8 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- ÜmitDpi: yerel VPN servisi (ön plan bildirimi) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <!-- Sesli komut / mikrofon -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
@@ -102,6 +104,16 @@
             android:exported="false"
             android:screenOrientation="fullSensor"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density"/>
+
+        <!-- ÜmitDpi: ByeDPI + tun2socks tabanlı yerel VPN (ISS engeli aşma) -->
+        <service
+            android:name=".dpi.UmitDpiVpnService"
+            android:exported="false"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService"/>
+            </intent-filter>
+        </service>
 
         <!-- İndirilen APK dosyasını sistem kurucusuna "content://" olarak güvenle göstermek için -->
         <provider
