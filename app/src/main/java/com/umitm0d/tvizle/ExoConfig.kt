@@ -60,12 +60,13 @@ object ExoConfig {
     fun loadControl(context: Context? = null): DefaultLoadControl {
         val low = context?.let { DevicePerformance.isLowEnd(it) } == true
         return DefaultLoadControl.Builder()
-            // Düşük cihazlarda orta büyüklükte, daha güçlü cihazlarda geniş canlı yayın tamponu.
+            // Vavoo_Stream 1.3.8 ile aynı mantık: min = max (sürekli doldur) ve KISA başlama/yeniden başlama eşiği.
+            // Eski değerlerde (yeniden tamponlamada 9-12 sn dolmasını beklemek) küçük bir kopma bile uzun logo/bekleme yapıyordu.
             .setBufferDurationsMs(
-                if (low) 20000 else 30000,
-                if (low) 75000 else 90000,
-                if (low) 4000 else 5000,
-                if (low) 9000 else 12000
+                if (low) 40000 else 50000,
+                if (low) 40000 else 50000,
+                1000,
+                2000
             )
             .setTargetBufferBytes(if (low) 32 * 1024 * 1024 else 64 * 1024 * 1024)
             .setPrioritizeTimeOverSizeThresholds(true)

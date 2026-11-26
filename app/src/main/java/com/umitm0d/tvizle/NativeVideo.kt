@@ -61,6 +61,7 @@ class NativeVideo(
     companion object {
         private const val UA = "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
         private const val TICK_MS = 250L
+        private const val QUIET_STALL_MS = 4000L   // canlıda bu süreden kısa tampon beklemesi logo/yükleniyor göstermez
         private const val MAX_SILENT_RETRIES = 6      // oynarken kopmada sayfaya hata gitmeden önce sessiz deneme sayısı
         private const val MAX_RESOLVE_TRIES = 3       // Vavoo çözümü başarısızsa sayfaya hata vermeden önce deneme sayısı
         private const val MAX_MID_RESOLVES = 3        // oynarken hata sonrası yeniden çözme hakkı
@@ -279,6 +280,7 @@ class NativeVideo(
             .build()
         p.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_BUFFERING) { if (stallSince == 0L) stallSince = android.os.SystemClock.elapsedRealtime() } else stallSince = 0L
                 if (state == Player.STATE_READY) { everReady = true; playedOk = true; retries = 0; resolveTries = 0; if (readyStableAt == 0L) readyStableAt = android.os.SystemClock.elapsedRealtime() } else if (state != Player.STATE_BUFFERING) readyStableAt = 0L
                 pushState()
             }
@@ -922,15 +924,21 @@ class NativeVideo(
     }
 
     private val tlWindow = Timeline.Window()
+    private var stallSince = 0L
     private fun pushState() {
         val p = player ?: return
         if (!loaded) return
-        val st = when (p.playbackState) {
+        var st = when (p.playbackState) {
             Player.STATE_IDLE -> 0
             Player.STATE_BUFFERING -> 1
             Player.STATE_READY -> 2
             else -> 3
         }
+        // Canlı yayın oynarken kısa tampon beklemesi (ağ/CDN dalgalanması, canlı kenara dönüş) sayfaya "yükleniyor" olarak
+        // bildirilirse sayfa ÜmitTV logo ekranını açıyor ve yayın "yenilendi" gibi görünüyor. Vavoo_Stream gibi, ilk
+        // QUIET_STALL_MS içinde son kare ekranda kalır; bekleme uzarsa gerçek yükleniyor durumu bildirilir.
+        if (st == 1 && playedOk && firstFrame && !freezeHold && p.isCurrentMediaItemLive && stallSince != 0L &&
+            android.os.SystemClock.elapsedRealtime() - stallSince < QUIET_STALL_MS) st = 2
         val dur = p.duration
         val live = p.isCurrentMediaItemLive || (dur == C.TIME_UNSET && st != 0)
         var dp = -1L
