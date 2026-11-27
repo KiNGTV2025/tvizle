@@ -19,3 +19,8 @@ Selamünaleyküm
 - Hızlı açılış (TV box): uygulama açılırken sayfa yüklenmesini beklemeden son canlı kanal ExoPlayer'da hemen başlar
   (sayfa arkada yüklenir, hazır olunca arayüz yayının üstüne yumuşakça açılır). Sayfa aynı kanalı isterse yayın
   yeniden yüklenmeden devralınır. Gerekli sayfa güncellemesi: tv-izle HTML (lastLive / pageReady çağrıları).
+
+## 11.2
+- Sesli komut: 1 kez kullanınca mikrofonun/ses tanıma servisinin kilitlenip Google Asistan ve YouTube'da da çalışmaz hale gelmesi (TV box'ı kapatıp açana kadar) düzeltildi.
+  SpeechRecognizer artık cancel()+destroy() ile aynı anda ve geri çağrının içinden kapatılmıyor; dinleyici sökülür, cancel gönderilir, destroy gecikmeli yapılır (Google servisinde hayalet oturum kalmaz).
+  Servis bağlantısı takılırsa (6 sn içinde hazır olmazsa) oturum temiz kapatılıp yeniden denenir; stopListening sonrası yanıt gelmezse 4 sn'de mikrofon zorla bırakılır.

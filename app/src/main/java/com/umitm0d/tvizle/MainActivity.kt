@@ -113,7 +113,13 @@ open class MainActivity : Activity() {
             return String(c.doFinal(ct), Charsets.UTF_8)
         }
         /** SpeechRecognizer yok edildikten sonra yenisini açmadan önce beklenecek süre (ms). */
-        private const val REC_COOLDOWN_MS = 350L
+        private const val REC_COOLDOWN_MS = 450L
+        /** destroy() öncesi cancel()'ın Google ses servisine ulaşması için beklenen süre (ms). */
+        private const val REC_DESTROY_DELAY_MS = 300L
+        /** onReadyForSpeech bu sürede gelmezse servis bağlantısı takılmış sayılır (ms). */
+        private const val REC_READY_TIMEOUT_MS = 6000L
+        /** stopListening() sonrası sonuç/hata gelmezse oturum zorla kapatılır (ms). */
+        private const val REC_STOP_GRACE_MS = 4000L
         /** Sayfanın çekileceği uzak adres. GitHub Pages bunu text/html olarak sunmalı (uzantısız dosyalarda
          *  bazı sunucular "application/octet-stream" döner; o durumda WebView sayfayı HTML olarak yorumlayamaz —
          *  gerekiyorsa dosyayı index.html adıyla barındırın ya da klasörün sonuna "/" ekleyin). */
@@ -975,7 +981,20 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             }
         }
         @JavascriptInterface
-        fun stopListening() { runOnUiThread { runCatching { recognizer?.stopListening() } } }
+        fun stopListening() {
+            runOnUiThread {
+                val r = recognizer ?: return@runOnUiThread
+                val g = recGen
+                runCatching { r.stopListening() }
+                // Sonuç/hata hiç gelmezse mikrofon açık kalmasın
+                uiHandler.postDelayed({
+                    if (g == recGen && recognizer === r) {
+                        destroyRecognizer()
+                        jsSR("end")
+                    }
+                }, REC_STOP_GRACE_MS)
+            }
+        }
         @JavascriptInterface
         fun cancelListening() { runOnUiThread { destroyRecognizer() } }
         @JavascriptInterface
@@ -986,15 +1005,38 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         web.evaluateJavascript("window.__umitSR&&window.__umitSR('$type',$data)", null)
     }
 
-    private fun destroyRecognizer() {
+    private val noopRecListener = object : RecognitionListener {
+        override fun onReadyForSpeech(p: Bundle?) {}
+        override fun onBeginningOfSpeech() {}
+        override fun onRmsChanged(v: Float) {}
+        override fun onBufferReceived(b: ByteArray?) {}
+        override fun onEndOfSpeech() {}
+        override fun onError(e: Int) {}
+        override fun onResults(b: Bundle?) {}
+        override fun onPartialResults(b: Bundle?) {}
+        override fun onEvent(t: Int, b: Bundle?) {}
+    }
+
+    /** Tanıyıcıyı güvenli kapatır. Eski kod cancel()+destroy()'u aynı anda (hatta bazen geri çağrının içinden) çağırıyordu;
+     *  bu, Google ses servisinde "hayalet oturum" bırakıp mikrofonu kilitliyor, Asistan/YouTube da duymaz oluyordu
+     *  (TV box yeniden başlayana kadar). Artık: dinleyici sökülür → (oturum bitmediyse) cancel → destroy GECİKMELİ ve
+     *  geri çağrının dışında yapılır. */
+    private fun destroyRecognizer(sessionEnded: Boolean = false, immediate: Boolean = false) {
         recGen++
         startToken++   // bekleyen (gecikmeli) bir başlatma varsa iptal et
-        recognizer?.let {
-            runCatching { it.cancel() }
-            runCatching { it.destroy() }
-            lastRecDestroyAt = SystemClock.uptimeMillis()
-        }
+        val r = recognizer
         recognizer = null
+        if (r == null) return
+        runCatching { r.setRecognitionListener(noopRecListener) }      // ölü oturumdan geri çağrı gelmesin
+        if (!sessionEnded) runCatching { r.cancel() }
+        if (immediate) {
+            runCatching { r.destroy() }
+            lastRecDestroyAt = SystemClock.uptimeMillis()
+        } else {
+            val delay = if (sessionEnded) 120L else REC_DESTROY_DELAY_MS
+            lastRecDestroyAt = SystemClock.uptimeMillis() + delay   // soğuma süresi gerçek destroy anından başlasın
+            uiHandler.postDelayed({ runCatching { r.destroy() } }, delay)
+        }
     }
 
     /** Eski recognizer'ın servis bağlantısı kapanmadan yenisini açmak TV kutularında ERROR_CLIENT/BUSY veriyor
@@ -1012,7 +1054,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         }
         destroyRecognizer()
         val token = startToken
-        val wait = (REC_COOLDOWN_MS - (SystemClock.uptimeMillis() - lastRecDestroyAt)).coerceIn(0L, REC_COOLDOWN_MS)
+        val wait = (lastRecDestroyAt + REC_COOLDOWN_MS - SystemClock.uptimeMillis()).coerceIn(0L, REC_COOLDOWN_MS + REC_DESTROY_DELAY_MS)
         if (wait > 0L) {
             uiHandler.postDelayed({ if (token == startToken) beginSpeech(lang, interim, maxAlt, attempt) }, wait)
         } else {
@@ -1025,11 +1067,12 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         val r = SpeechRecognizer.createSpeechRecognizer(this)
         recognizer = r
         var gotAny = false
+        var ready = false
         val tag = if (lang.length == 2) lang.lowercase() + "-" + lang.uppercase() else lang
 
         r.setRecognitionListener(object : RecognitionListener {
             private fun live() = gen == recGen
-            override fun onReadyForSpeech(p: Bundle?) { if (live()) { jsSR("start"); jsSR("audiostart") } }
+            override fun onReadyForSpeech(p: Bundle?) { if (live()) { ready = true; jsSR("start"); jsSR("audiostart") } }
             override fun onBeginningOfSpeech() { if (live()) jsSR("speechstart") }
             override fun onRmsChanged(v: Float) {}
             override fun onBufferReceived(b: ByteArray?) {}
@@ -1055,11 +1098,11 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 // Servis meşgul / istemci hatası: JS'e hata göstermeden yerel olarak yeniden dene
                 if (!gotAny && attempt < 2 && (e == SpeechRecognizer.ERROR_RECOGNIZER_BUSY ||
                             e == SpeechRecognizer.ERROR_CLIENT || e == 10 /* ERROR_TOO_MANY_REQUESTS */)) {
-                    destroyRecognizer()
+                    destroyRecognizer(sessionEnded = true)
                     val t = startToken
                     uiHandler.postDelayed({
                         if (t == startToken) beginSpeech(lang, interim, maxAlt, attempt + 1)
-                    }, REC_COOLDOWN_MS + 150L)
+                    }, REC_COOLDOWN_MS + 250L)
                     return
                 }
                 val code = when (e) {
@@ -1093,12 +1136,25 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         } catch (e: Exception) {
             destroyRecognizer()
             jsSR("error", JSONObject().put("error", "service-not-allowed")); jsSR("end")
+            return
         }
+        // Bekçi: servis bağlantısı takılırsa (onReadyForSpeech hiç gelmezse) oturumu temiz kapatıp bir kez daha dene
+        uiHandler.postDelayed({
+            if (gen == recGen && recognizer === r && !ready) {
+                destroyRecognizer()
+                val t = startToken
+                if (attempt < 2) {
+                    uiHandler.postDelayed({ if (t == startToken) beginSpeech(lang, interim, maxAlt, attempt + 1) }, REC_COOLDOWN_MS + REC_DESTROY_DELAY_MS + 100L)
+                } else {
+                    jsSR("error", JSONObject().put("error", "no-speech")); jsSR("end")
+                }
+            }
+        }, REC_READY_TIMEOUT_MS)
     }
 
     /** Oturum bittiğinde (sonuç/hata) recognizer'ı ana iş parçacığında bırak; aynı oturum hâlâ güncelse yok et. */
     private fun releaseRecognizer(r: SpeechRecognizer, gen: Int) {
-        uiHandler.post { if (gen == recGen && recognizer === r) destroyRecognizer() }
+        uiHandler.post { if (gen == recGen && recognizer === r) destroyRecognizer(sessionEnded = true) }
     }
 
     private fun alts(b: Bundle?): JSONArray {
@@ -1470,7 +1526,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     }
 
     override fun onDestroy() {
-        destroyRecognizer()
+        destroyRecognizer(immediate = true)
         mediaSession?.release(); mediaSession = null
         fileCb?.onReceiveValue(null); fileCb = null
         if (dlReceiverOn) { runCatching { unregisterReceiver(dlCompleteReceiver) }; dlReceiverOn = false }
