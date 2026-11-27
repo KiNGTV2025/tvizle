@@ -235,6 +235,14 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     private lateinit var web: WebView
     @Volatile private var pageTask: FutureTask<ByteArray?>? = null
     private lateinit var root: FrameLayout
+    /** Açılış anında (WebView ilk kareyi çizene kadar) gösterilen logo; siyah ekran beklemesini kısaltır. */
+    private var launchSplash: View? = null
+    private fun hideLaunchSplash() {
+        val v = launchSplash ?: return
+        launchSplash = null
+        runCatching { v.animate().alpha(0f).setDuration(120).withEndAction { runCatching { root.removeView(v) } }.start() }
+            .onFailure { runCatching { root.removeView(v) } }
+    }
     private lateinit var nv: NativeVideo
     private lateinit var gv: GridVideo
     private var customView: View? = null
@@ -335,6 +343,8 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         if (localSig.isEmpty() || !NativeGuard.sigOk(localSig, EXPECTED_SIG_SHA256)) { showModBlockedScreen(); return }
         // Modlamaya karşı 2. kat: uzak kapatma anahtarı (arka planda; sonuç gelene kadar uygulama normal açılmaya devam eder).
         checkRemoteKillSwitch(localSig)
+        // Şifreli sayfayı (önbellekten) HEMEN çözmeye başla: WebView/ExoPlayer katmanları kurulurken paralel çalışır.
+        pageTask = newPageTask()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         web = SlopWebView(this).apply { setBackgroundColor(Color.TRANSPARENT); isFocusable = true }   // şeffaf: video arkadaki SurfaceView'den görünür
@@ -342,6 +352,18 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         nv = NativeVideo(this, root, web) { js -> web.evaluateJavascript(js, null) }   // WebView'in ALTINA video katmanı
         gv = GridVideo(this, root, web) { js -> web.evaluateJavascript(js, null) }   // çoklu ekran kutuları (her biri ayrı ExoPlayer)
         setContentView(root)
+        // Anında logo: siyah ekran yerine, sayfa ilk kareyi çizene kadar görünür.
+        launchSplash = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+            isClickable = false; isFocusable = false
+            val sz = (resources.displayMetrics.density * 140).toInt()
+            addView(android.widget.ImageView(this@MainActivity).apply {
+                setImageResource(R.drawable.ic_launcher_fg)
+                scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+            }, FrameLayout.LayoutParams(sz, sz, Gravity.CENTER))
+        }.also { root.addView(it, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)) }
+        // Güvenlik ağı: sayfa hiç çizilmezse bile en geç 6 sn sonra kaldır.
+        uiHandler.postDelayed({ hideLaunchSplash() }, 6000)
 
         with(web.settings) {
             javaScriptEnabled = true
@@ -456,7 +478,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         askAudioOnce()
 
         WebView.setWebContentsDebuggingEnabled(false)
-        pageTask = newPageTask()          // şifreli sayfayı arka planda indir+çöz; WebView isteği bellekten karşılanır
+        // pageTask onCreate başında başlatıldı (şifreli sayfa arka planda çözülür; WebView isteği bellekten karşılanır)
         web.webViewClient = remoteClient()
         web.loadUrl(REMOTE_URL)
         web.requestFocus()
@@ -587,8 +609,13 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 else -> { if (launchOk) runCatching { startActivity(Intent(Intent.ACTION_VIEW, req.url)) }; true }
             }
         }
+        override fun onPageCommitVisible(v: WebView, url: String?) {
+            super.onPageCommitVisible(v, url)
+            hideLaunchSplash()
+        }
         override fun onPageFinished(v: WebView, url: String?) {
             super.onPageFinished(v, url)
+            hideLaunchSplash()
             if (!onTvDevice) v.evaluateJavascript(PIP_SHIM_JS, null)   // TV'de PiP yok; güven denetimi enterPip() içinde yapılır
             if (onTvDevice && DevicePerformance.isLowEnd(this@MainActivity)) {
                 v.evaluateJavascript("(function(){window.__umitLowEnd=true;document.documentElement.classList.add('umit-lowend-tv','perf-lite','umit-vidlean','umit-hd-lean');})();", null)
