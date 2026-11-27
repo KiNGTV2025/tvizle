@@ -81,6 +81,7 @@ open class MainActivity : Activity() {
     companion object {
         private const val REQ_FILE = 4101
         private const val REQ_AUDIO = 4102
+        private const val REQ_VOICE_UI = 4110
         private const val REQ_STORAGE = 4103
         private const val REQ_WEB_MEDIA = 4104
         /** true yapılırsa basılan her tuşun kodu ekranda gösterilir (direksiyon tuşu teşhisi için). */
@@ -992,14 +993,19 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             runOnUiThread {
                 val r = recognizer ?: return@runOnUiThread
                 val g = recGen
-                runCatching { r.stopListening() }
+                // Mikrofon daha yeni açılırken ani durdurma ses donanımını takılı bırakabiliyor: en az 800 ms bekle
+                val wait = (sessStartAt + 800L - SystemClock.uptimeMillis()).coerceAtLeast(0L)
+                uiHandler.postDelayed({
+                    if (g == recGen && recognizer === r) runCatching { r.stopListening() }
+                }, wait)
                 // Sonuç/hata hiç gelmezse mikrofon açık kalmasın
                 uiHandler.postDelayed({
                     if (g == recGen && recognizer === r) {
+                        slog("stopListening sonrası yanıt gelmedi, oturum kapatıldı")
                         destroyRecognizer()
                         jsSR("end")
                     }
-                }, REC_STOP_GRACE_MS)
+                }, wait + REC_STOP_GRACE_MS)
             }
         }
         @JavascriptInterface
@@ -1046,6 +1052,63 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         }
     }
 
+    // ───────── Tanı / kurtarma yardımcıları ─────────
+    private var silentFails = 0          // üst üste "hiç ses gelmeyen" oturum sayısı
+    private var sessStartAt = 0L
+    private var voiceUiSuppressUntil = 0L
+
+    /** Olay günlüğü: Android/data/com.umitm0d.tvizle/files/speech_log.txt (+ logcat etiketi UmitSpeech). */
+    private fun slog(msg: String) {
+        android.util.Log.i("UmitSpeech", msg)
+        runCatching {
+            val f = File(getExternalFilesDir(null) ?: filesDir, "speech_log.txt")
+            if (f.length() > 100_000L) f.writeText("")
+            f.appendText(java.text.SimpleDateFormat("MM-dd HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date()) + " " + msg + "\n")
+        }
+    }
+
+    /** Mikrofon durumu özeti: giriş cihazları, aktif kayıt sayısı, sessize alınan kayıt, ses modu, mikrofon mute. */
+    private fun micDiag(): String = try {
+        val am = getSystemService(AUDIO_SERVICE) as android.media.AudioManager
+        val ins = if (Build.VERSION.SDK_INT >= 23)
+            am.getDevices(android.media.AudioManager.GET_DEVICES_INPUTS).joinToString(",") { it.type.toString() } else "?"
+        var act = 0; var sil = 0
+        if (Build.VERSION.SDK_INT >= 24) {
+            val l = am.activeRecordingConfigurations
+            act = l.size
+            if (Build.VERSION.SDK_INT >= 29) sil = l.count { it.isClientSilenced }
+        }
+        "giris=[$ins] aktifKayit=$act sessiz=$sil mod=${am.mode} micMute=${am.isMicrophoneMute}"
+    } catch (e: Throwable) { "diag-hata" }
+
+    /** Başlamadan önce kendini onarım: sistem mikrofonu sessize alınmışsa aç, ses modu iletişimde takılı kaldıysa normale döndür. */
+    private fun prepareAudioForMic() {
+        try {
+            val am = getSystemService(AUDIO_SERVICE) as android.media.AudioManager
+            if (am.isMicrophoneMute) { am.isMicrophoneMute = false; slog("mic mute kapatıldı") }
+            if (am.mode == android.media.AudioManager.MODE_IN_COMMUNICATION) { am.mode = android.media.AudioManager.MODE_NORMAL; slog("ses modu NORMAL'e döndürüldü") }
+        } catch (e: Throwable) { }
+        slog("hazırlık: " + micDiag())
+    }
+
+    /** Sistem ses tanıma penceresi (Google'ın kendi ekranı): kendi SpeechRecognizer'ımız üst üste ses alamazsa yedek yol. */
+    private fun startSpeechViaIntent(lang: String, maxAlt: Int): Boolean {
+        val tag = if (lang.length == 2) lang.lowercase() + "-" + lang.uppercase() else lang
+        val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, tag)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, maxAlt.coerceIn(1, 5))
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Komutu söyleyin")
+        }
+        return try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(i, REQ_VOICE_UI)
+            slog("sistem ses penceresi açıldı")
+            jsSR("start"); jsSR("audiostart")
+            true
+        } catch (e: Exception) { slog("sistem ses penceresi yok: ${e.javaClass.simpleName}"); false }
+    }
+
     /** Eski recognizer'ın servis bağlantısı kapanmadan yenisini açmak TV kutularında ERROR_CLIENT/BUSY veriyor
      *  (2. / 3. denemede "dinlemiyor" gibi). Bu yüzden eskisini yok edip kısa bir bekleme süresiyle yenisini başlatırız. */
     private fun startSpeech(lang: String, interim: Boolean, maxAlt: Int, attempt: Int = 0) {
@@ -1058,6 +1121,14 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             pendingSpeech = { startSpeech(lang, interim, maxAlt) }
             requestAudioPerm()
             return
+        }
+        if (SystemClock.uptimeMillis() < voiceUiSuppressUntil) {   // sistem penceresi az önce iptal edildi: döngüye girme
+            jsSR("error", JSONObject().put("error", "aborted")); jsSR("end"); return
+        }
+        prepareAudioForMic()
+        if (silentFails >= 3) {
+            slog("üst üste $silentFails sessiz oturum → sistem ses penceresi deneniyor")
+            if (startSpeechViaIntent(lang, maxAlt)) return
         }
         destroyRecognizer()
         val token = startToken
@@ -1075,12 +1146,15 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         recognizer = r
         var gotAny = false
         var ready = false
+        var heard = false
+        sessStartAt = SystemClock.uptimeMillis()
+        slog("oturum başladı attempt=$attempt lang=$lang")
         val tag = if (lang.length == 2) lang.lowercase() + "-" + lang.uppercase() else lang
 
         r.setRecognitionListener(object : RecognitionListener {
             private fun live() = gen == recGen
-            override fun onReadyForSpeech(p: Bundle?) { if (live()) { ready = true; jsSR("start"); jsSR("audiostart") } }
-            override fun onBeginningOfSpeech() { if (live()) jsSR("speechstart") }
+            override fun onReadyForSpeech(p: Bundle?) { if (live()) { ready = true; slog("hazır (" + (SystemClock.uptimeMillis() - sessStartAt) + " ms)"); jsSR("start"); jsSR("audiostart") } }
+            override fun onBeginningOfSpeech() { if (live()) { heard = true; jsSR("speechstart") } }
             override fun onRmsChanged(v: Float) {}
             override fun onBufferReceived(b: ByteArray?) {}
             override fun onEndOfSpeech() { if (live()) jsSR("speechend") }
@@ -1096,12 +1170,14 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             override fun onResults(b: Bundle?) {
                 if (!live()) return
                 val a = alts(b)
-                if (a.length() > 0) jsSR("result", JSONObject().put("alts", a).put("final", true))
+                slog("sonuç: ${a.length()} alternatif")
+                if (a.length() > 0) { silentFails = 0; jsSR("result", JSONObject().put("alts", a).put("final", true)) }
                 jsSR("end")
                 releaseRecognizer(r, gen)   // işi biten dinleyiciyi hemen kapat: arkada ikinci bir dinleyici kalmasın
             }
             override fun onError(e: Int) {
                 if (!live()) return
+                slog("hata kodu=$e heard=$heard ready=$ready gotAny=$gotAny " + micDiag())
                 // Servis meşgul / istemci hatası: JS'e hata göstermeden yerel olarak yeniden dene
                 if (!gotAny && attempt < 2 && (e == SpeechRecognizer.ERROR_RECOGNIZER_BUSY ||
                             e == SpeechRecognizer.ERROR_CLIENT || e == 10 /* ERROR_TOO_MANY_REQUESTS */)) {
@@ -1112,6 +1188,11 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                     }, REC_COOLDOWN_MS + 250L)
                     return
                 }
+                if (!heard && !gotAny && (e == SpeechRecognizer.ERROR_NO_MATCH || e == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
+                            e == SpeechRecognizer.ERROR_AUDIO || e == SpeechRecognizer.ERROR_RECOGNIZER_BUSY)) {
+                    silentFails++
+                    if (silentFails == 2) toast("Mikrofon sesi gelmiyor (kod $e) – ${micDiag()}")
+                } else if (heard || gotAny) silentFails = 0
                 val code = when (e) {
                     SpeechRecognizer.ERROR_NO_MATCH,
                     SpeechRecognizer.ERROR_SPEECH_TIMEOUT,
@@ -1148,6 +1229,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         // Bekçi: servis bağlantısı takılırsa (onReadyForSpeech hiç gelmezse) oturumu temiz kapatıp bir kez daha dene
         uiHandler.postDelayed({
             if (gen == recGen && recognizer === r && !ready) {
+                slog("bekçi: 6 sn'de hazır olmadı")
                 destroyRecognizer()
                 val t = startToken
                 if (attempt < 2) {
@@ -1192,6 +1274,22 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         }
         if (req == REQ_INSTALL_SRC) {
             checkPendingInstallResume(fromResult = true)
+            return
+        }
+        if (req == REQ_VOICE_UI) {
+            val l = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            val c = data?.getFloatArrayExtra(RecognizerIntent.EXTRA_CONFIDENCE_SCORES)
+            slog("sistem ses penceresi sonucu: res=$res n=${l?.size ?: 0}")
+            if (res == RESULT_OK && !l.isNullOrEmpty()) {
+                silentFails = 0
+                val arr = JSONArray()
+                for (k in l.indices) arr.put(JSONObject().put("t", l[k]).put("c", (c?.getOrNull(k) ?: 0.9f).toDouble()))
+                jsSR("result", JSONObject().put("alts", arr).put("final", true))
+            } else {
+                voiceUiSuppressUntil = SystemClock.uptimeMillis() + 3000L
+                jsSR("error", JSONObject().put("error", "aborted"))
+            }
+            jsSR("end")
             return
         }
         @Suppress("DEPRECATION")

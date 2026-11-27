@@ -29,3 +29,9 @@ Selamünaleyküm
 - Erken başlatma: son kanal açıldıktan sonra "YÜKLENİYOR" ekranının tekrar görünmesi ve arayüzün kasması düzeltildi.
   Arayüz artık sayfa kanal listesini hazırlayıp "hazırım" (pageReady) demeden açılmıyor (eski 2,5 sn'lik zorla açma kaldırıldı;
   yalnızca 25-30 sn'lik güvenlik ağı kaldı). Açılış geçişi alpha animasyonu yerine anında yapılıyor.
+
+## 11.4
+- Sesli komut (mikrofon takılması): oturum başlamadan sistem mikrofonu mute/ses modu kontrol edilip onarılıyor; mikrofon henüz açılırken ani durdurma (800 ms'den önce) engellendi.
+- Üst üste 3 "ses gelmedi" oturumunda Google'ın kendi ses tanıma penceresi (RecognizerIntent) yedek olarak açılıyor.
+- Tanı günlüğü: Android/data/com.umitm0d.tvizle/files/speech_log.txt (giriş cihazları, aktif kayıt sayısı, sessize alınan kayıt, hata kodları). Sorun sürerse bu dosya gönderilsin.
+- Sayfa: bip sesi için açılan WebAudio bağlamı bip bitince kapatılıyor.
