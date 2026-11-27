@@ -31,7 +31,8 @@ object SecurePage {
         val dir = ctx.filesDir
         val cacheBlob = File(dir, ".pg")
         // 1) ağdan taze blob; olmazsa önbellekteki şifreli kopya
-        val fresh = runCatching { download(blobUrl) }.getOrNull()
+        val bust = blobUrl + (if (blobUrl.contains('?')) "&" else "?") + "_=" + System.currentTimeMillis()   // CDN kenar önbelleğini atla: yeni sürüm hemen gelsin
+        val fresh = runCatching { download(bust) }.getOrNull()
         for ((blob, isFresh) in listOf(fresh to true, runCatching { cacheBlob.readBytes() }.getOrNull() to false)) {
             if (blob == null || blob.size < 4 + 16 + 12 + 16 || String(blob, 0, 4, Charsets.US_ASCII) != "UTV1") continue
             val buildId = blob.copyOfRange(4, 20)
