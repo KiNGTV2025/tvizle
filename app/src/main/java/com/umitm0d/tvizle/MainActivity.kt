@@ -1026,7 +1026,10 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             }
         }
         @JavascriptInterface
-        fun cancelListening() { runOnUiThread { destroyRecognizer() } }
+        fun cancelListening() {
+            // JS oturumu iptal ettiğinde mikrofonu bekletmeden bırak.
+            runOnUiThread { destroyRecognizer(immediate = true) }
+        }
         @JavascriptInterface
         fun isAvailable(): Boolean = SpeechRecognizer.isRecognitionAvailable(this@MainActivity)
     }
@@ -1059,13 +1062,17 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         if (r == null) return
         runCatching { r.setRecognitionListener(noopRecListener) }      // ölü oturumdan geri çağrı gelmesin
         if (!sessionEnded) runCatching { r.cancel() }
-        if (immediate) {
+        if (immediate || sessionEnded) {
+            // Sonuç/hata callback'i tamamlandıktan sonra (releaseRecognizer -> main queue)
+            // recognizer'ı aynı UI kuyruğunda hemen yok et. 120 ms bekletmek bazı TV Box
+            // SpeechRecognition servislerinde AudioRecord oturumunu/Google mikrofon kilidini
+            // açık bırakabiliyor.
             runCatching { r.destroy() }
             lastRecDestroyAt = SystemClock.uptimeMillis()
         } else {
-            val delay = if (sessionEnded) 120L else REC_DESTROY_DELAY_MS
-            lastRecDestroyAt = SystemClock.uptimeMillis() + delay   // soğuma süresi gerçek destroy anından başlasın
-            uiHandler.postDelayed({ runCatching { r.destroy() } }, delay)
+            // Kullanıcı oturumu iptal etti: cancel servise ulaşsın, ardından destroy.
+            lastRecDestroyAt = SystemClock.uptimeMillis() + REC_DESTROY_DELAY_MS
+            uiHandler.postDelayed({ runCatching { r.destroy() } }, REC_DESTROY_DELAY_MS)
         }
     }
 
@@ -1640,7 +1647,8 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         stopUpdateWatch()
         mediaSession?.isActive = false           // arka plandayken müzik/navigasyon uygulamasının tuşlarını çalma
         if (btnReceiverOn) { runCatching { unregisterReceiver(mediaBtnReceiver) }; btnReceiverOn = false }
-        destroyRecognizer()
+        // Asistan/YouTube gibi başka uygulamalara geçerken mikrofonu anında serbest bırak.
+        destroyRecognizer(immediate = true)
         if (!pipLayoutActive && !(Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode)) {
             nv.onHostStop(); gv.onHostStop()
         }
