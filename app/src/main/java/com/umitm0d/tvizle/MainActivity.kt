@@ -112,6 +112,8 @@ open class MainActivity : Activity() {
             c.init(Cipher.DECRYPT_MODE, SecretKeySpec(sKey(), "AES"), GCMParameterSpec(128, iv))
             return String(c.doFinal(ct), Charsets.UTF_8)
         }
+        /** SpeechRecognizer yok edildikten sonra yenisini açmadan önce beklenecek süre (ms). */
+        private const val REC_COOLDOWN_MS = 350L
         /** Sayfanın çekileceği uzak adres. GitHub Pages bunu text/html olarak sunmalı (uzantısız dosyalarda
          *  bazı sunucular "application/octet-stream" döner; o durumda WebView sayfayı HTML olarak yorumlayamaz —
          *  gerekiyorsa dosyayı index.html adıyla barındırın ya da klasörün sonuna "/" ekleyin). */
@@ -244,6 +246,8 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     private var pendingSpeech: (() -> Unit)? = null
     private var recognizer: SpeechRecognizer? = null
     private var recGen = 0
+    private var startToken = 0            // gecikmeli başlatmaları iptal etmek için
+    private var lastRecDestroyAt = 0L     // son recognizer.destroy() zamanı (SystemClock.uptimeMillis)
 
     // direksiyon tuşları
     private var mediaSession: MediaSession? = null
@@ -893,14 +897,18 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
     private fun destroyRecognizer() {
         recGen++
+        startToken++   // bekleyen (gecikmeli) bir başlatma varsa iptal et
         recognizer?.let {
             runCatching { it.cancel() }
             runCatching { it.destroy() }
+            lastRecDestroyAt = SystemClock.uptimeMillis()
         }
         recognizer = null
     }
 
-    private fun startSpeech(lang: String, interim: Boolean, maxAlt: Int) {
+    /** Eski recognizer'ın servis bağlantısı kapanmadan yenisini açmak TV kutularında ERROR_CLIENT/BUSY veriyor
+     *  (2. / 3. denemede "dinlemiyor" gibi). Bu yüzden eskisini yok edip kısa bir bekleme süresiyle yenisini başlatırız. */
+    private fun startSpeech(lang: String, interim: Boolean, maxAlt: Int, attempt: Int = 0) {
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             toast("Cihazda ses tanıma servisi yok (Google uygulaması / Google ile Ses gerekli)")
             jsSR("error", JSONObject().put("error", "service-not-allowed")); jsSR("end")
@@ -912,9 +920,20 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             return
         }
         destroyRecognizer()
+        val token = startToken
+        val wait = (REC_COOLDOWN_MS - (SystemClock.uptimeMillis() - lastRecDestroyAt)).coerceIn(0L, REC_COOLDOWN_MS)
+        if (wait > 0L) {
+            uiHandler.postDelayed({ if (token == startToken) beginSpeech(lang, interim, maxAlt, attempt) }, wait)
+        } else {
+            beginSpeech(lang, interim, maxAlt, attempt)
+        }
+    }
+
+    private fun beginSpeech(lang: String, interim: Boolean, maxAlt: Int, attempt: Int) {
         val gen = recGen
         val r = SpeechRecognizer.createSpeechRecognizer(this)
         recognizer = r
+        var gotAny = false
         val tag = if (lang.length == 2) lang.lowercase() + "-" + lang.uppercase() else lang
 
         r.setRecognitionListener(object : RecognitionListener {
@@ -928,17 +947,30 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             override fun onPartialResults(b: Bundle?) {
                 if (!live()) return
                 val a = alts(b)
-                if (a.length() > 0)
+                if (a.length() > 0) {
+                    gotAny = true
                     jsSR("result", JSONObject().put("alts", a).put("final", false))
+                }
             }
             override fun onResults(b: Bundle?) {
                 if (!live()) return
                 val a = alts(b)
                 if (a.length() > 0) jsSR("result", JSONObject().put("alts", a).put("final", true))
                 jsSR("end")
+                releaseRecognizer(r, gen)   // işi biten dinleyiciyi hemen kapat: arkada ikinci bir dinleyici kalmasın
             }
             override fun onError(e: Int) {
                 if (!live()) return
+                // Servis meşgul / istemci hatası: JS'e hata göstermeden yerel olarak yeniden dene
+                if (!gotAny && attempt < 2 && (e == SpeechRecognizer.ERROR_RECOGNIZER_BUSY ||
+                            e == SpeechRecognizer.ERROR_CLIENT || e == 10 /* ERROR_TOO_MANY_REQUESTS */)) {
+                    destroyRecognizer()
+                    val t = startToken
+                    uiHandler.postDelayed({
+                        if (t == startToken) beginSpeech(lang, interim, maxAlt, attempt + 1)
+                    }, REC_COOLDOWN_MS + 150L)
+                    return
+                }
                 val code = when (e) {
                     SpeechRecognizer.ERROR_NO_MATCH,
                     SpeechRecognizer.ERROR_SPEECH_TIMEOUT,
@@ -954,6 +986,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 }
                 jsSR("error", JSONObject().put("error", code))
                 jsSR("end")
+                releaseRecognizer(r, gen)
             }
         })
 
@@ -970,6 +1003,11 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             destroyRecognizer()
             jsSR("error", JSONObject().put("error", "service-not-allowed")); jsSR("end")
         }
+    }
+
+    /** Oturum bittiğinde (sonuç/hata) recognizer'ı ana iş parçacığında bırak; aynı oturum hâlâ güncelse yok et. */
+    private fun releaseRecognizer(r: SpeechRecognizer, gen: Int) {
+        uiHandler.post { if (gen == recGen && recognizer === r) destroyRecognizer() }
     }
 
     private fun alts(b: Bundle?): JSONArray {
