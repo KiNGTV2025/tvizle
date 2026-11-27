@@ -66,7 +66,7 @@ object ExoConfig {
             .setBufferDurationsMs(
                 15000,
                 50000,
-                if (low) 1000 else 2500,
+                if (low) 800 else 1500,     // v10.7: kanal geçişinde daha erken başla (zaplama hızlansın)
                 if (low) 2000 else 5000
             )
             .setTargetBufferBytes(if (low) 32 * 1024 * 1024 else 64 * 1024 * 1024)
