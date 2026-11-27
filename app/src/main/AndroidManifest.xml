@@ -25,7 +25,6 @@
     <!-- Android 11+: cihazdaki ses tanıma servisini görebilmek için -->
     <queries>
         <intent><action android:name="android.speech.RecognitionService"/></intent>
-        <intent><action android:name="android.speech.action.RECOGNIZE_SPEECH"/></intent>
     </queries>
 
     <application

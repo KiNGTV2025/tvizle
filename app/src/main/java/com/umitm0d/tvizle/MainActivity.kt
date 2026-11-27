@@ -113,11 +113,6 @@ open class MainActivity : Activity() {
             c.init(Cipher.DECRYPT_MODE, SecretKeySpec(sKey(), "AES"), GCMParameterSpec(128, iv))
             return String(c.doFinal(ct), Charsets.UTF_8)
         }
-        /** 12.2: Mikrofonu uygulama değil SİSTEMİN kendi ses penceresi (Google Asistan/YouTube aramasıyla aynı yol) açsın.
-         *  Uygulama içi SpeechRecognizer oturumları bazı TV box'larda (örn. Hiremco) ses girişini kilitliyordu; sistem penceresinde
-         *  mikrofonun açılıp kapanmasını Google'ın kendi etkinliği yönetir, bizde kilit kalmaz.
-         *  Cihazda böyle bir pencere yoksa eski uygulama-içi yol otomatik yedek olarak kullanılır. İstenirse false yapılabilir. */
-        private const val VOICE_USE_SYSTEM_UI = true
         /** SpeechRecognizer yok edildikten sonra yenisini açmadan önce beklenecek süre (ms). */
         private const val REC_COOLDOWN_MS = 900L
         /** destroy() öncesi cancel()'ın Google ses servisine ulaşması için beklenen süre (ms). */
@@ -1144,14 +1139,6 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     /** Eski recognizer'ın servis bağlantısı kapanmadan yenisini açmak TV kutularında ERROR_CLIENT/BUSY veriyor
      *  (2. / 3. denemede "dinlemiyor" gibi). Bu yüzden eskisini yok edip kısa bir bekleme süresiyle yenisini başlatırız. */
     private fun startSpeech(lang: String, interim: Boolean, maxAlt: Int, attempt: Int = 0) {
-        if (SystemClock.uptimeMillis() < voiceUiSuppressUntil) {   // sistem penceresi az önce kapandı: çift tetiklemeyi yut
-            jsSR("error", JSONObject().put("error", "ui-cancel")); jsSR("end"); return
-        }
-        // Önce sistem ses penceresi (mikrofon izni de gerekmez; Google'ın etkinliği kendi iznini kullanır).
-        if (VOICE_USE_SYSTEM_UI) {
-            destroyRecognizer(immediate = true)      // arkada kalmış uygulama-içi tanıyıcı varsa mikrofonu bırak
-            if (startSpeechViaIntent(lang, maxAlt)) return
-        }
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             toast("Cihazda ses tanıma servisi yok (Google uygulaması / Google ile Ses gerekli)")
             jsSR("error", JSONObject().put("error", "service-not-allowed")); jsSR("end")
@@ -1161,6 +1148,9 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             pendingSpeech = { startSpeech(lang, interim, maxAlt) }
             requestAudioPerm()
             return
+        }
+        if (SystemClock.uptimeMillis() < voiceUiSuppressUntil) {   // sistem penceresi az önce iptal edildi: döngüye girme
+            jsSR("error", JSONObject().put("error", "aborted")); jsSR("end"); return
         }
         prepareAudioForMic()
         if (silentFails >= 3) {
@@ -1317,23 +1307,16 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             val l = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
             val c = data?.getFloatArrayExtra(RecognizerIntent.EXTRA_CONFIDENCE_SCORES)
             slog("sistem ses penceresi sonucu: res=$res n=${l?.size ?: 0}")
-            // Etkinlik dönüşünde WebView henüz onResume olmamış olabilir; JS olaylarını kısa gecikmeyle ver.
             if (res == RESULT_OK && !l.isNullOrEmpty()) {
                 silentFails = 0
                 val arr = JSONArray()
                 for (k in l.indices) arr.put(JSONObject().put("t", l[k]).put("c", (c?.getOrNull(k) ?: 0.9f).toDouble()))
-                uiHandler.postDelayed({
-                    jsSR("result", JSONObject().put("alts", arr).put("final", true))
-                    jsSR("end")
-                }, 250L)
+                jsSR("result", JSONObject().put("alts", arr).put("final", true))
             } else {
-                // İptal / ses yok: sayfa tarafı bunu "dur" sayar, yeniden deneme döngüsü ve hata uyarısı olmaz.
-                voiceUiSuppressUntil = SystemClock.uptimeMillis() + 700L
-                uiHandler.postDelayed({
-                    jsSR("error", JSONObject().put("error", "ui-cancel"))
-                    jsSR("end")
-                }, 250L)
+                voiceUiSuppressUntil = SystemClock.uptimeMillis() + 3000L
+                jsSR("error", JSONObject().put("error", "aborted"))
             }
+            jsSR("end")
             return
         }
         @Suppress("DEPRECATION")
