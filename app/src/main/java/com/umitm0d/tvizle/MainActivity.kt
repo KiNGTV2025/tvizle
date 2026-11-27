@@ -254,6 +254,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     private var earlyActive = false
     private var earlyAdopted = false
     private var earlyRevealed = false
+    private var earlySafetyPosted = false
     private var earlyUrl = ""
     private fun earlyStart() {
         try {
@@ -268,7 +269,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             nv.onFirstFrameCb = { hideLaunchSplash(true) }  // ilk kare gelince logo kalksın
             nv.load(url, sp.getString("el_ua", "") ?: "", sp.getString("el_ref", "") ?: "", 0L, true, sp.getString("el_kind", "") ?: "")
             nv.earlyShow()
-            uiHandler.postDelayed({ earlyReveal() }, 15000)  // her durumda sayfayı aç (sayfa hiç hazır demezse)
+            uiHandler.postDelayed({ earlyReveal() }, 30000)  // her durumda sayfayı aç (sayfa hiç hazır demezse)
         } catch (e: Exception) {
             earlyActive = false
             runCatching { web.alpha = 1f }
@@ -280,7 +281,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         nv.earlyRelease()
         hideLaunchSplash(true)
         web.animate().cancel()
-        web.animate().alpha(1f).setDuration(320).start()   // yayının üstüne arayüz yumuşakça açılır
+        web.alpha = 1f   // anında aç: tam ekran WebView'i yarı saydam (alpha animasyonu) çizmek zayıf kutularda kasıyordu
         // sayfa aynı kanalı yüklemediyse (üyelik engeli, farklı kanal vb.) erken oynatmayı durdur
         uiHandler.postDelayed({
             if (!earlyAdopted && !isFinishing && !isDestroyed) runCatching { nv.stop() }
@@ -661,7 +662,13 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         }
         override fun onPageFinished(v: WebView, url: String?) {
             super.onPageFinished(v, url)
-            if (earlyActive && !earlyRevealed) uiHandler.postDelayed({ earlyReveal() }, 2500)   // sayfa pageReady çağırmadıysa yedek
+            // Eskiden burada 2,5 sn sonra arayüz zorla açılıyordu: sayfa kanal listesini hâlâ hazırlarken
+            // "YÜKLENİYOR" ekranı yayının üstüne çıkıyor ve TV box kasıyordu. Artık yalnızca sayfa pageReady
+            // derse açılır; bu sadece sayfa hiç hazır demezse devreye giren uzun güvenlik ağı.
+            if (earlyActive && !earlyRevealed && !earlySafetyPosted) {
+                earlySafetyPosted = true
+                uiHandler.postDelayed({ earlyReveal() }, 25000)
+            }
             hideLaunchSplash()
             if (!onTvDevice) v.evaluateJavascript(PIP_SHIM_JS, null)   // TV'de PiP yok; güven denetimi enterPip() içinde yapılır
             if (onTvDevice && DevicePerformance.isLowEnd(this@MainActivity)) {

@@ -24,3 +24,8 @@ Selamünaleyküm
 - Sesli komut: 1 kez kullanınca mikrofonun/ses tanıma servisinin kilitlenip Google Asistan ve YouTube'da da çalışmaz hale gelmesi (TV box'ı kapatıp açana kadar) düzeltildi.
   SpeechRecognizer artık cancel()+destroy() ile aynı anda ve geri çağrının içinden kapatılmıyor; dinleyici sökülür, cancel gönderilir, destroy gecikmeli yapılır (Google servisinde hayalet oturum kalmaz).
   Servis bağlantısı takılırsa (6 sn içinde hazır olmazsa) oturum temiz kapatılıp yeniden denenir; stopListening sonrası yanıt gelmezse 4 sn'de mikrofon zorla bırakılır.
+
+## 11.3
+- Erken başlatma: son kanal açıldıktan sonra "YÜKLENİYOR" ekranının tekrar görünmesi ve arayüzün kasması düzeltildi.
+  Arayüz artık sayfa kanal listesini hazırlayıp "hazırım" (pageReady) demeden açılmıyor (eski 2,5 sn'lik zorla açma kaldırıldı;
+  yalnızca 25-30 sn'lik güvenlik ağı kaldı). Açılış geçişi alpha animasyonu yerine anında yapılıyor.
