@@ -35,3 +35,9 @@ Selamünaleyküm
 - Üst üste 3 "ses gelmedi" oturumunda Google'ın kendi ses tanıma penceresi (RecognizerIntent) yedek olarak açılıyor.
 - Tanı günlüğü: Android/data/com.umitm0d.tvizle/files/speech_log.txt (giriş cihazları, aktif kayıt sayısı, sessize alınan kayıt, hata kodları). Sorun sürerse bu dosya gönderilsin.
 - Sayfa: bip sesi için açılan WebAudio bağlamı bip bitince kapatılıyor.
+
+## 11.5
+- Erken başlatma: sayfa artık WebView'i alpha=0 ile gizleyerek değil, şeffaf + içeriği görünmez yaparak arkada yükleniyor.
+  (alpha=0 iken Android WebView'i hiç çizmiyor; sayfa animasyon/kare üretemiyor, yükleme ekranı 0%'da takılı görünüyor ve hazır olunca birikmiş iş kasma yapıyordu.)
+  Yükleme ekranı yayının üstüne hiç çıkmıyor; hazır olunca arayüz açılıyor ve odak WebView'e veriliyor (kumanda tuşları için).
+- Köprüye UmitVideo.isEarly() eklendi (HTML <head> içinden sorulur).

@@ -266,7 +266,8 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             if (!(url.startsWith("http://") || url.startsWith("https://"))) return
             earlyUrl = url
             earlyActive = true
-            web.alpha = 0f                                  // sayfa arkada yüklenirken görünmez; video görünür
+            // WebView alpha=0 ile gizlenirse Android onu hiç çizmez: sayfa kare/animasyon üretemez, hazır olunca birikmiş iş yüzünden kasar.
+            // Bunun yerine WebView normal çizilir; sayfa şeffaf ve içeriği görünmez yapılır (injectEarlyCss), video arkadan görünür.
             nv.onFirstFrameCb = { hideLaunchSplash(true) }  // ilk kare gelince logo kalksın
             nv.load(url, sp.getString("el_ua", "") ?: "", sp.getString("el_ref", "") ?: "", 0L, true, sp.getString("el_kind", "") ?: "")
             nv.earlyShow()
@@ -276,13 +277,22 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             runCatching { web.alpha = 1f }
         }
     }
+    @Volatile private var earlyCssOn = false
+    private val EARLY_CSS_JS = "(function(){try{if(document.getElementById('umit-early'))return;var s=document.createElement('style');s.id='umit-early';" +
+        "s.textContent='html,body{background:transparent!important}body>*{visibility:hidden!important}';" +
+        "(document.head||document.documentElement).appendChild(s);}catch(e){}})()"
+    private fun injectEarlyCss() {
+        if (earlyActive && !earlyRevealed) { earlyCssOn = true; web.evaluateJavascript(EARLY_CSS_JS, null) }
+    }
     private fun earlyReveal() {
         if (!earlyActive || earlyRevealed) return
         earlyRevealed = true
+        earlyCssOn = false
         nv.earlyRelease()
         hideLaunchSplash(true)
-        web.animate().cancel()
-        web.alpha = 1f   // anında aç: tam ekran WebView'i yarı saydam (alpha animasyonu) çizmek zayıf kutularda kasıyordu
+        web.evaluateJavascript("(function(){try{var e=document.getElementById('umit-early');if(e)e.remove();}catch(x){}})()", null)
+        web.alpha = 1f
+        web.requestFocus()   // kumanda tuşları kesin sayfaya gitsin
         // sayfa aynı kanalı yüklemediyse (üyelik engeli, farklı kanal vb.) erken oynatmayı durdur
         uiHandler.postDelayed({
             if (!earlyAdopted && !isFinishing && !isDestroyed) runCatching { nv.stop() }
@@ -659,10 +669,12 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         }
         override fun onPageCommitVisible(v: WebView, url: String?) {
             super.onPageCommitVisible(v, url)
+            injectEarlyCss()
             hideLaunchSplash()
         }
         override fun onPageFinished(v: WebView, url: String?) {
             super.onPageFinished(v, url)
+            injectEarlyCss()
             // Eskiden burada 2,5 sn sonra arayüz zorla açılıyordu: sayfa kanal listesini hâlâ hazırlarken
             // "YÜKLENİYOR" ekranı yayının üstüne çıkıyor ve TV box kasıyordu. Artık yalnızca sayfa pageReady
             // derse açılır; bu sadece sayfa hiç hazır demezse devreye giren uzun güvenlik ağı.
@@ -679,6 +691,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         }
         override fun onPageStarted(v: WebView, url: String?, favicon: android.graphics.Bitmap?) {
             super.onPageStarted(v, url, favicon)
+            injectEarlyCss()
             if (!onTvDevice) v.evaluateJavascript(PIP_SHIM_JS, null)   // TV'de PiP yok; güven denetimi enterPip() içinde yapılır
             if (NATIVE_MAIN_PLAYER && url != null && url.startsWith(REMOTE_URL)) v.evaluateJavascript(HOOK_JS, null)
             // Çevrimdışı sayfasından "Tekrar dene"ye basıldı: normal moda dön
@@ -792,6 +805,10 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             else e.remove("el_url")
             e.apply()
         }
+
+        /** Sayfa <head> içinde sorar: erken başlatma sürüyorsa kendini yayının üstünde şeffaf/görünmez tutar (yükleme ekranı görünmez). */
+        @JavascriptInterface
+        fun isEarly(): Boolean = earlyActive && !earlyRevealed
 
         /** Sayfa ekrana hazır (yükleme ekranı kalktı, uygulama kabuğu çizildi): erken video üzerine sayfayı aç. */
         @JavascriptInterface
