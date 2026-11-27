@@ -41,3 +41,10 @@ Selamünaleyküm
   (alpha=0 iken Android WebView'i hiç çizmiyor; sayfa animasyon/kare üretemiyor, yükleme ekranı 0%'da takılı görünüyor ve hazır olunca birikmiş iş kasma yapıyordu.)
   Yükleme ekranı yayının üstüne hiç çıkmıyor; hazır olunca arayüz açılıyor ve odak WebView'e veriliyor (kumanda tuşları için).
 - Köprüye UmitVideo.isEarly() eklendi (HTML <head> içinden sorulur).
+
+
+## 12.1 – Sesli komut oturum düzeltmesi
+- SpeechRecognizer iptalinde `cancel()` ve `destroy()` artık aynı anda çağrılmıyor; servis oturumunu bırakması için gecikmeli kapatma uygulanıyor.
+- Yeni dinleme oturumu, önceki tanıma servisinin kapanma/soğuma süresinden sonra başlatılıyor.
+- Uygulama arka plana geçerken mikrofon oturumu güvenli biçimde bırakılıyor.
+- Uygulama artık Android genelindeki mikrofon sessizini ve AudioManager modunu zorla değiştirmiyor.
