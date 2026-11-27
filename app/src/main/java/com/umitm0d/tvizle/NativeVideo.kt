@@ -309,6 +309,7 @@ class NativeVideo(
             override fun onRenderedFirstFrame() {
                 firstFrame = true
                 newFrameSeen = true
+                onFirstFrameCb?.let { cb -> handler.post { runCatching { cb() } } }
                 if (freezeHold && freezeEndWanted) handler.postDelayed({ if (freezeEndWanted) freezeClear() }, 90)   // yeni kare göründü: donuk kareyi yumuşakça kaldır
                 send(JSONObject().put("t", "rf"))
                 try {   // teşhis: hangi dekoder, hangi biçim/çözünürlük (sayfada kısa bildirim olarak görünür)
@@ -409,6 +410,42 @@ class NativeVideo(
         val factory = DefaultMediaSourceFactory(DefaultDataSource.Factory(act, http), extractors)
         factory.setLoadErrorHandlingPolicy(policy)
         return factory.createMediaSource(item.build())
+    }
+
+    // ───────────── Erken başlatma: uygulama açılırken sayfa yüklenmeden son kanal ─────────────
+    private var earlyHold = false
+    @Volatile var onFirstFrameCb: (() -> Unit)? = null
+    /** Erken başlatılan yayın hâlâ sağlıklı mı (sayfa aynı adresi isterse yeniden yüklemeden devralınır). */
+    fun earlyHealthy(): Boolean {
+        val p = player
+        if (loaded && p != null && p.playbackState != Player.STATE_IDLE) return true
+        return !loaded && vavooSrc.isNotBlank()      // Vavoo adresi hâlâ çözülüyor
+    }
+    /** Videoyu sayfanın dikdörtgenini beklemeden tam ekranda göster. */
+    fun earlyShow() {
+        earlyHold = true
+        showWanted = true
+        val dm = act.resources.displayMetrics
+        val lp = (holder.layoutParams as? FrameLayout.LayoutParams) ?: FrameLayout.LayoutParams(dm.widthPixels, dm.heightPixels)
+        lp.gravity = Gravity.TOP or Gravity.START
+        lp.leftMargin = 0; lp.topMargin = 0; lp.width = dm.widthPixels; lp.height = dm.heightPixels
+        holder.layoutParams = lp
+        refreshVisibility()
+        applyFit()
+    }
+    /** Sayfa hazır: videoyu sayfanın istediği yere taşı. */
+    fun earlyRelease() {
+        if (!earlyHold) return
+        earlyHold = false
+        val r = lastRect ?: return
+        rect(r[0], r[1], r[2], r[3], r[4], r[5], showWanted, fitMode)
+    }
+    /** Sayfa erken başlatılan yayını devraldı: sayfa o ana kadar olan olayları (iz listesi, ilk kare, durum) kaçırdı. */
+    fun resendInfo() {
+        val p = player ?: return
+        runCatching { pushTracks(p.currentTracks) }
+        pushState()
+        if (firstFrame) send(JSONObject().put("t", "rf"))
     }
 
     // ───────────── Sayfadan gelen komutlar (hepsi ana iş parçacığında çağrılır) ─────────────
@@ -659,6 +696,7 @@ class NativeVideo(
     private fun webOffY(): Int = (web.layoutParams as? ViewGroup.MarginLayoutParams)?.topMargin ?: 0
     /** WebView'in konumu değişince (şerit inip çıkarken) son bilinen dikdörtgeni anında yeni konuma taşır. */
     fun reapply() {
+        if (earlyHold) return
         val r = lastRect ?: return
         val iw = r[4]; val ih = r[5]
         val sx = if (iw > 0 && web.width > 0) web.width / iw else 1.0
@@ -668,6 +706,8 @@ class NativeVideo(
         if (lp.leftMargin != nx || lp.topMargin != ny) { lp.leftMargin = nx; lp.topMargin = ny; holder.layoutParams = lp }
     }
     fun rect(x: Double, y: Double, w: Double, h: Double, iw: Double, ih: Double, show: Boolean, fit: String) {
+        // erken başlatma: sayfa hazır olana kadar video tam ekranda kalır; sayfanın dikdörtgeni yalnızca saklanır
+        if (earlyHold) { fitMode = fit; showWanted = show; lastRect = doubleArrayOf(x, y, w, h, iw, ih); return }
         // donuk kare gösterilirken (kanal geçişi) sayfanın "gizle" çağrısını yok say: son kare yerinde kalsın
         if (freezeHold && (!show || w <= 2.0 || h <= 2.0)) return
         fitMode = fit

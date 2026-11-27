@@ -14,3 +14,8 @@ Selamünaleyküm
   (sayfa kendi düz kopyasını okuyamıyordu). Artık sayfa, kendi build numarasını (HTML v<N>) 20 sn'de bir
   version.json'daki build ile karşılaştırıyor. Şerit "Yenile"ye basınca taze sayfa/şifreli blob çekiliyor.
 - SecurePage: şifreli blob indirilirken CDN önbelleği atlanıyor (?_=zaman damgası).
+
+## 11.1
+- Hızlı açılış (TV box): uygulama açılırken sayfa yüklenmesini beklemeden son canlı kanal ExoPlayer'da hemen başlar
+  (sayfa arkada yüklenir, hazır olunca arayüz yayının üstüne yumuşakça açılır). Sayfa aynı kanalı isterse yayın
+  yeniden yüklenmeden devralınır. Gerekli sayfa güncellemesi: tv-izle HTML (lastLive / pageReady çağrıları).

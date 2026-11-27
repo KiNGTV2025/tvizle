@@ -237,12 +237,50 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     private lateinit var root: FrameLayout
     /** Açılış anında (WebView ilk kareyi çizene kadar) gösterilen logo; siyah ekran beklemesini kısaltır. */
     private var launchSplash: View? = null
-    private fun hideLaunchSplash() {
+    private fun hideLaunchSplash(force: Boolean = false) {
+        if (earlyActive && !earlyRevealed && !force) return   // erken başlatılan videonun ilk karesini bekle
         val v = launchSplash ?: return
         launchSplash = null
         runCatching { v.animate().alpha(0f).setDuration(120).withEndAction { runCatching { root.removeView(v) } }.start() }
             .onFailure { runCatching { root.removeView(v) } }
     }
+    // ───────── Erken başlatma ─────────
+    private var earlyActive = false
+    private var earlyAdopted = false
+    private var earlyRevealed = false
+    private var earlyUrl = ""
+    private fun earlyStart() {
+        try {
+            if (this::class != MainActivity::class || !onTvDevice) return
+            if (extractExternalQuery(intent) != null) return
+            val sp = getSharedPreferences("umittv", MODE_PRIVATE)
+            val url = sp.getString("el_url", "") ?: ""
+            if (!(url.startsWith("http://") || url.startsWith("https://"))) return
+            earlyUrl = url
+            earlyActive = true
+            web.alpha = 0f                                  // sayfa arkada yüklenirken görünmez; video görünür
+            nv.onFirstFrameCb = { hideLaunchSplash(true) }  // ilk kare gelince logo kalksın
+            nv.load(url, sp.getString("el_ua", "") ?: "", sp.getString("el_ref", "") ?: "", 0L, true, sp.getString("el_kind", "") ?: "")
+            nv.earlyShow()
+            uiHandler.postDelayed({ earlyReveal() }, 15000)  // her durumda sayfayı aç (sayfa hiç hazır demezse)
+        } catch (e: Exception) {
+            earlyActive = false
+            runCatching { web.alpha = 1f }
+        }
+    }
+    private fun earlyReveal() {
+        if (!earlyActive || earlyRevealed) return
+        earlyRevealed = true
+        nv.earlyRelease()
+        hideLaunchSplash(true)
+        web.animate().cancel()
+        web.animate().alpha(1f).setDuration(320).start()   // yayının üstüne arayüz yumuşakça açılır
+        // sayfa aynı kanalı yüklemediyse (üyelik engeli, farklı kanal vb.) erken oynatmayı durdur
+        uiHandler.postDelayed({
+            if (!earlyAdopted && !isFinishing && !isDestroyed) runCatching { nv.stop() }
+        }, 6000)
+    }
+
     private lateinit var nv: NativeVideo
     private lateinit var gv: GridVideo
     private var customView: View? = null
@@ -363,7 +401,9 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             }, FrameLayout.LayoutParams(sz, sz, Gravity.CENTER))
         }.also { root.addView(it, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)) }
         // Güvenlik ağı: sayfa hiç çizilmezse bile en geç 6 sn sonra kaldır.
-        uiHandler.postDelayed({ hideLaunchSplash() }, 6000)
+        uiHandler.postDelayed({ hideLaunchSplash(true) }, 6000)
+        // Erken başlatma: sayfa yüklenmeden son canlı kanalı hemen aç (sayfa hazır olunca üstüne yumuşakça açılır)
+        uiHandler.post { earlyStart() }
 
         with(web.settings) {
             javaScriptEnabled = true
@@ -615,6 +655,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         }
         override fun onPageFinished(v: WebView, url: String?) {
             super.onPageFinished(v, url)
+            if (earlyActive && !earlyRevealed) uiHandler.postDelayed({ earlyReveal() }, 2500)   // sayfa pageReady çağırmadıysa yedek
             hideLaunchSplash()
             if (!onTvDevice) v.evaluateJavascript(PIP_SHIM_JS, null)   // TV'de PiP yok; güven denetimi enterPip() içinde yapılır
             if (onTvDevice && DevicePerformance.isLowEnd(this@MainActivity)) {
@@ -718,8 +759,29 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
         @JavascriptInterface
         fun load(url: String, ua: String, referer: String, startMs: Double, autoplay: Boolean, kind: String) = ui {
-            if (url.startsWith("http://") || url.startsWith("https://") || (url.startsWith("file:///") && isRecFile(url))) nv.load(url, ua, referer, startMs.toLong(), autoplay, kind)
+            if (url.startsWith("http://") || url.startsWith("https://") || (url.startsWith("file:///") && isRecFile(url))) {
+                if (earlyActive && !earlyAdopted) {
+                    earlyAdopted = true
+                    // sayfa, erken başlatılan kanalın aynısını istiyor: yeniden yükleme, yayını devral
+                    if (url == earlyUrl && nv.earlyHealthy()) { nv.resendInfo(); return@ui }
+                }
+                nv.load(url, ua, referer, startMs.toLong(), autoplay, kind)
+            }
         }
+
+        /** Sayfa, her canlı kanal açılışında son kanalı bildirir (canlı değilse kayıt silinir). Bir sonraki açılışta erken başlatılır. */
+        @JavascriptInterface
+        fun lastLive(url: String, ua: String, referer: String, kind: String, live: Boolean) = ui {
+            val e = getSharedPreferences("umittv", MODE_PRIVATE).edit()
+            if (live && (url.startsWith("http://") || url.startsWith("https://")))
+                e.putString("el_url", url).putString("el_ua", ua).putString("el_ref", referer).putString("el_kind", kind)
+            else e.remove("el_url")
+            e.apply()
+        }
+
+        /** Sayfa ekrana hazır (yükleme ekranı kalktı, uygulama kabuğu çizildi): erken video üzerine sayfayı aç. */
+        @JavascriptInterface
+        fun pageReady() = ui { earlyReveal() }
 
         /** file:/// yalnızca kayıt klasöründeki dosyalar için; köprüden rastgele yerel dosya açılamasın. */
         private fun isRecFile(u: String): Boolean = try {
