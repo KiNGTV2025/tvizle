@@ -114,7 +114,7 @@ open class MainActivity : Activity() {
             return String(c.doFinal(ct), Charsets.UTF_8)
         }
         /** SpeechRecognizer yok edildikten sonra yenisini açmadan önce beklenecek süre (ms). */
-        private const val REC_COOLDOWN_MS = 450L
+        private const val REC_COOLDOWN_MS = 900L
         /** destroy() öncesi cancel()'ın Google ses servisine ulaşması için beklenen süre (ms). */
         private const val REC_DESTROY_DELAY_MS = 300L
         /** onReadyForSpeech bu sürede gelmezse servis bağlantısı takılmış sayılır (ms). */
@@ -1010,26 +1010,21 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             runOnUiThread {
                 val r = recognizer ?: return@runOnUiThread
                 val g = recGen
-                // Mikrofon daha yeni açılırken ani durdurma ses donanımını takılı bırakabiliyor: en az 800 ms bekle
-                val wait = (sessStartAt + 800L - SystemClock.uptimeMillis()).coerceAtLeast(0L)
-                uiHandler.postDelayed({
-                    if (g == recGen && recognizer === r) runCatching { r.stopListening() }
-                }, wait)
-                // Sonuç/hata hiç gelmezse mikrofon açık kalmasın
+                // Stop isteğini 800 ms ertelemek, bazı Android 10 TV kutularında
+                // AudioRecord oturumunu gereksiz yere açık tutuyor. Hemen gönder.
+                runCatching { r.stopListening() }.onFailure { slog("stopListening hata: ${it.javaClass.simpleName}") }
+                // Servis cevap vermezse oturumu kesin kapat ve JS tarafını da sonlandır.
                 uiHandler.postDelayed({
                     if (g == recGen && recognizer === r) {
-                        slog("stopListening sonrası yanıt gelmedi, oturum kapatıldı")
-                        destroyRecognizer()
+                        slog("stopListening watchdog: zorla kapatıldı " + micDiag())
+                        destroyRecognizer(immediate = true)
                         jsSR("end")
                     }
-                }, wait + REC_STOP_GRACE_MS)
+                }, REC_STOP_GRACE_MS)
             }
         }
         @JavascriptInterface
-        fun cancelListening() {
-            // JS oturumu iptal ettiğinde mikrofonu bekletmeden bırak.
-            runOnUiThread { destroyRecognizer(immediate = true) }
-        }
+        fun cancelListening() { runOnUiThread { destroyRecognizer(immediate = true) } }
         @JavascriptInterface
         fun isAvailable(): Boolean = SpeechRecognizer.isRecognitionAvailable(this@MainActivity)
     }
@@ -1062,17 +1057,13 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         if (r == null) return
         runCatching { r.setRecognitionListener(noopRecListener) }      // ölü oturumdan geri çağrı gelmesin
         if (!sessionEnded) runCatching { r.cancel() }
-        if (immediate || sessionEnded) {
-            // Sonuç/hata callback'i tamamlandıktan sonra (releaseRecognizer -> main queue)
-            // recognizer'ı aynı UI kuyruğunda hemen yok et. 120 ms bekletmek bazı TV Box
-            // SpeechRecognition servislerinde AudioRecord oturumunu/Google mikrofon kilidini
-            // açık bırakabiliyor.
+        if (immediate) {
             runCatching { r.destroy() }
             lastRecDestroyAt = SystemClock.uptimeMillis()
         } else {
-            // Kullanıcı oturumu iptal etti: cancel servise ulaşsın, ardından destroy.
-            lastRecDestroyAt = SystemClock.uptimeMillis() + REC_DESTROY_DELAY_MS
-            uiHandler.postDelayed({ runCatching { r.destroy() } }, REC_DESTROY_DELAY_MS)
+            val delay = if (sessionEnded) 120L else REC_DESTROY_DELAY_MS
+            lastRecDestroyAt = SystemClock.uptimeMillis() + delay   // soğuma süresi gerçek destroy anından başlasın
+            uiHandler.postDelayed({ runCatching { r.destroy() } }, delay)
         }
     }
 
@@ -1154,7 +1145,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             slog("üst üste $silentFails sessiz oturum → sistem ses penceresi deneniyor")
             if (startSpeechViaIntent(lang, maxAlt)) return
         }
-        destroyRecognizer()
+        destroyRecognizer(immediate = true)
         val token = startToken
         val wait = (lastRecDestroyAt + REC_COOLDOWN_MS - SystemClock.uptimeMillis()).coerceIn(0L, REC_COOLDOWN_MS + REC_DESTROY_DELAY_MS)
         if (wait > 0L) {
@@ -1647,7 +1638,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         stopUpdateWatch()
         mediaSession?.isActive = false           // arka plandayken müzik/navigasyon uygulamasının tuşlarını çalma
         if (btnReceiverOn) { runCatching { unregisterReceiver(mediaBtnReceiver) }; btnReceiverOn = false }
-        // Asistan/YouTube gibi başka uygulamalara geçerken mikrofonu anında serbest bırak.
+        // Başka uygulamaya geçişte Android ses tanıma servisini ve mikrofonu hemen bırak.
         destroyRecognizer(immediate = true)
         if (!pipLayoutActive && !(Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode)) {
             nv.onHostStop(); gv.onHostStop()

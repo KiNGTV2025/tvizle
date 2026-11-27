@@ -50,7 +50,7 @@
     window.UmitNative.startListening(String(lang), !!this.interimResults, n);
   };
   SR.prototype.stop = function () {
-    if (cur === this) { try { window.UmitNative.stopListening(); } catch (e) {} }
+    if (cur === this) { try { window.UmitNative.stopListening(); } catch (e) { try { window.UmitNative.cancelListening(); } catch (_) {} } }
   };
   SR.prototype.abort = function () {
     if (cur !== this) return;
