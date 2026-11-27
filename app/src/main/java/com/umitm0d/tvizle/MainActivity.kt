@@ -163,6 +163,8 @@ open class MainActivity : Activity() {
         private val APP_SEC: String by lazy {
             if (BuildConfig.APP_SEC.isBlank()) "" else NativeGuard.unlockSecret(localSigCache, EXPECTED_SIG_SHA256, BuildConfig.APP_SEC, OBF_KEY)
         }
+        /** true: açılışta şifreli sayfa önce yerel önbellekten verilir, güncelleme arka planda indirilir (yeni sürüm bir sonraki açılışta gelir). */
+        private const val PAGE_CACHE_FIRST = true
         private const val REQ_INSTALL_SRC = 4104
         /** true: sayfadaki "harici oynatıcı" butonu uygulamanın kendi ExoPlayer oynatıcısını açar. false: eski gibi sistem seçicisi. */
         private const val USE_BUILTIN_PLAYER = true
@@ -549,7 +551,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     private fun newPageTask(): FutureTask<ByteArray?> {
         val app = applicationContext
         val sig = sigSha256()
-        return FutureTask<ByteArray?> { SecurePage.load(app, BLOB_URL, KEY_URLS, APP_SEC, sig) }.also { Thread(it).start() }
+        return FutureTask<ByteArray?> { SecurePage.load(app, BLOB_URL, KEY_URLS, APP_SEC, sig, PAGE_CACHE_FIRST) }.also { Thread(it).start() }
     }
 
     /** REMOTE_URL (ana sayfa) isteğini ağa göndermeden, çözülmüş HTML ile bellekten yanıtlar. */

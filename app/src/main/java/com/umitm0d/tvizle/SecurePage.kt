@@ -27,7 +27,41 @@ import javax.crypto.spec.SecretKeySpec
 object SecurePage {
     private const val KS_ALIAS = "utv_pk_wrap"
 
-    fun load(ctx: Context, blobUrl: String, keyUrls: List<String>, appSecret: String, certSha: String): ByteArray? {
+    @Volatile private var refreshing = false
+
+    /**
+     * cacheFirst=true: önbellekte şifreli blob + sarılı anahtar varsa HTML ağa hiç gitmeden hemen döner;
+     * taze blob arka planda indirilip önbelleğe yazılır (yeni sürüm bir sonraki açılışta devreye girer).
+     * Önbellek yoksa/çözülemezse eski davranış: ağdan indir.
+     */
+    fun load(ctx: Context, blobUrl: String, keyUrls: List<String>, appSecret: String, certSha: String, cacheFirst: Boolean = false): ByteArray? {
+        if (cacheFirst) {
+            val cached = runCatching { loadCached(ctx) }.getOrNull()
+            if (cached != null) {
+                if (!refreshing) {
+                    refreshing = true
+                    Thread {
+                        try { runCatching { loadNet(ctx, blobUrl, keyUrls, appSecret, certSha) } }
+                        finally { refreshing = false }
+                    }.start()
+                }
+                return cached
+            }
+        }
+        return loadNet(ctx, blobUrl, keyUrls, appSecret, certSha)
+    }
+
+    /** Yalnızca yerel veriyle (ağ yok): önbellekteki blob + Keystore ile sarılı anahtar. */
+    private fun loadCached(ctx: Context): ByteArray? {
+        val blob = File(ctx.filesDir, ".pg").takeIf { it.exists() }?.readBytes() ?: return null
+        if (blob.size < 4 + 16 + 12 + 16 || String(blob, 0, 4, Charsets.US_ASCII) != "UTV1") return null
+        val keyFile = File(ctx.filesDir, ".pk_" + hex(blob.copyOfRange(4, 20)))
+        if (!keyFile.exists()) return null
+        val key = unwrap(keyFile.readBytes())
+        return decrypt(blob, key)
+    }
+
+    private fun loadNet(ctx: Context, blobUrl: String, keyUrls: List<String>, appSecret: String, certSha: String): ByteArray? {
         val dir = ctx.filesDir
         val cacheBlob = File(dir, ".pg")
         // 1) ağdan taze blob; olmazsa önbellekteki şifreli kopya
