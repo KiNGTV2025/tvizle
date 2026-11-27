@@ -1621,6 +1621,22 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         if (hasFocus) immersive()
     }
 
+    override fun onStart() {
+        super.onStart()
+        // Activity yeniden görünür olduğunda WebView zamanlayıcılarını tekrar aç.
+        // pauseTimers/resumeTimers WebView motorundaki JS zamanlayıcılarını da durdurur/başlatır.
+        runCatching { web.resumeTimers() }
+    }
+
+    override fun onStop() {
+        // Uygulama gerçekten görünür değilken (Home/başka uygulama) WebView'in
+        // setInterval/setTimeout döngülerinin arka planda CPU tüketmesini engelle.
+        // onPause zaten video ve mikrofonu durdurur; burada JS zamanlayıcılarını
+        // tamamen askıya alıyoruz. Geri dönünce onStart bunları yeniden açar.
+        runCatching { web.pauseTimers() }
+        super.onStop()
+    }
+
     override fun onResume() {
         super.onResume(); web.onResume(); immersive(); nv.onHostStart(); gv.onHostStart()
         mediaSession?.isActive = true            // direksiyon medya tuşları bu uygulamaya gelsin
@@ -1641,6 +1657,11 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         // Başka uygulamaya geçişte Android ses tanıma servisini ve mikrofonu hemen bırak.
         destroyRecognizer(immediate = true)
         if (!pipLayoutActive && !(Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode)) {
+            // WebView tarafındaki HTML5 video/ses oturumlarını da kapat; yalnızca
+            // ExoPlayer'ı durdurmak, sayfa içindeki ek medya akışlarını durdurmayabilir.
+            runCatching {
+                web.evaluateJavascript("(function(){try{window.dispatchEvent(new Event('umit-app-background'));}catch(e){}try{document.querySelectorAll('video,audio').forEach(function(m){m.pause();});}catch(e){}try{if(window.voiceRecognition){try{window.voiceRecognition.abort();}catch(e){}}}catch(e){}})()", null)
+            }
             nv.onHostStop(); gv.onHostStop()
         }
         web.onPause(); super.onPause()
