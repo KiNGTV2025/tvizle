@@ -833,6 +833,10 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             e.apply()
         }
 
+        /** Uygulama sürümü (ör. "13.6"); sayfa küçük bir sürüm etiketi göstermek için sorar. */
+        @JavascriptInterface
+        fun appVersion(): String = currentVersionName()
+
         /** Yayının gerçek indirme hızı (Mbps; Wi-Fi/mobil/kablolu). Ölçüm yoksa -1. */
         @JavascriptInterface
         fun streamMbps(): Double = try { nv.measuredMbps() } catch (e: Throwable) { -1.0 }
