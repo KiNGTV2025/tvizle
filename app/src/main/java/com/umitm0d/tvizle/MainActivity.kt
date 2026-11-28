@@ -987,8 +987,14 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         fun startListening(lang: String, interim: Boolean, maxAlt: Int) {
             runOnUiThread {
                 val u = web.url
-                val ok = u != null && u.startsWith(REMOTE_URL)
-                if (!ok) return@runOnUiThread
+                // Eskiden yalnızca startsWith(REMOTE_URL) bakılıyordu; yönlendirme/sorgu/son slash yüzünden
+                // sayfa reddedilince mikrofon HİÇBİR HATA vermeden sessizce açılmıyordu.
+                val ok = u != null && (u.startsWith(REMOTE_URL) || isTrustedUrl(u))
+                if (!ok) {
+                    slog("startListening reddedildi, url=$u")
+                    jsSR("error", JSONObject().put("error", "not-allowed")); jsSR("end")
+                    return@runOnUiThread
+                }
                 startSpeech(lang, interim, maxAlt)
             }
         }
@@ -1135,6 +1141,8 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
      *  (2. / 3. denemede "dinlemiyor" gibi). Bu yüzden eskisini yok edip kısa bir bekleme süresiyle yenisini başlatırız. */
     private fun startSpeech(lang: String, interim: Boolean, maxAlt: Int, attempt: Int = 0) {
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            // Ümit TV'deki gibi: kendi tanıyıcı yoksa sistemin ses penceresini dene
+            if (hasAudioPerm() && SystemClock.uptimeMillis() >= voiceUiSuppressUntil && startSpeechViaIntent(lang, maxAlt)) return
             toast("Cihazda ses tanıma servisi yok (Google uygulaması / Google ile Ses gerekli)")
             jsSR("error", JSONObject().put("error", "service-not-allowed")); jsSR("end")
             return
@@ -1210,6 +1218,15 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                     }, REC_COOLDOWN_MS + 250L)
                     return
                 }
+                // Ümit TV'deki VoiceActivity.err(): "ses algılanamadı" (6/7), ağ ve izin hataları dışındaki her hatada
+                // sistemin kendi ses penceresine düş (kendi tanıyıcımız bu cihazda çalışmıyor demektir).
+                val benign = e == SpeechRecognizer.ERROR_NO_MATCH || e == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
+                        e == SpeechRecognizer.ERROR_NETWORK || e == SpeechRecognizer.ERROR_NETWORK_TIMEOUT ||
+                        e == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS
+                if (!gotAny && !heard && !benign && SystemClock.uptimeMillis() >= voiceUiSuppressUntil) {
+                    destroyRecognizer(sessionEnded = true)
+                    if (startSpeechViaIntent(lang, maxAlt)) return
+                }
                 if (!heard && !gotAny && (e == SpeechRecognizer.ERROR_NO_MATCH || e == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
                             e == SpeechRecognizer.ERROR_AUDIO || e == SpeechRecognizer.ERROR_RECOGNIZER_BUSY)) {
                     silentFails++
@@ -1240,6 +1257,9 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, interim)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, maxAlt.coerceIn(1, 5))
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, tag)
+            putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 1200)
+            putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 1000)
         }
         try {
             r.startListening(i)
