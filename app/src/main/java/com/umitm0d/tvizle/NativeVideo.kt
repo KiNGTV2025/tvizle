@@ -75,6 +75,13 @@ class NativeVideo(
     private val surface = SurfaceView(act)
     // Donarak kanal geçişi: önceki kanalın son karesi bu ImageView'de tutulur (SurfaceView'in ÜSTÜNDE, WebView'in ALTINDA)
     private val freezeImg = ImageView(act).apply { scaleType = ImageView.ScaleType.FIT_CENTER; visibility = View.GONE }
+    // Uygulamanın İLK videosu: ilk kare gelene kadar SurfaceView bazı TV'lerde düz pembe/yeşil (başlatılmamış yüzey) gösteriyordu.
+    // Bu siyah katman yüzeyin ÜSTÜNDE durur ve ilk kare çizilince kalkar (yalnızca oturumdaki ilk yayın için).
+    private val shield = View(act).apply { setBackgroundColor(Color.BLACK); visibility = View.GONE }
+    private var anyFrameEver = false
+    private fun updateShield() {
+        shield.visibility = if (!anyFrameEver && !firstFrame && !freezeHold && loaded) View.VISIBLE else View.GONE
+    }
     // 4K: SurfaceView/donanım overlay yolu bazı SoC'lerde (Allwinner) bozuk renk üretiyor; 4K'da GPU yolu (TextureView) kullanılır
     private var tex: TextureView? = null
     private var useTex = false
@@ -261,6 +268,8 @@ class NativeVideo(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
         holder.addView(freezeImg, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
+        holder.addView(shield, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
         // WebView'in ALTINA (index 0): WebView saydam olduğu yerde video görünür
         root.addView(holder, 0, FrameLayout.LayoutParams(0, 0, Gravity.TOP or Gravity.START))
     }
@@ -308,6 +317,8 @@ class NativeVideo(
             }
             override fun onRenderedFirstFrame() {
                 firstFrame = true
+                anyFrameEver = true
+                updateShield()
                 newFrameSeen = true
                 onFirstFrameCb?.let { cb -> handler.post { runCatching { cb() } } }
                 if (freezeHold && freezeEndWanted) handler.postDelayed({ if (freezeEndWanted) freezeClear() }, 90)   // yeni kare göründü: donuk kareyi yumuşakça kaldır
@@ -499,6 +510,7 @@ class NativeVideo(
         firstFrame = false; readySince = 0L; swTried = false; hwRebuilds = 0; hasVideoTrack = false; readyStableAt = 0L; frameFix = 0
         levelRefs = emptyList(); audioRefs = emptyList(); videoRatio = 0f
         loaded = true
+        updateShield()
         if (vavooSrc.isNotBlank() && VavooResolver.matches(vavooSrc)) {
             proactiveRefreshGen++
             handler.removeCallbacks(proactiveVavooRefresh)
@@ -861,6 +873,7 @@ class NativeVideo(
     private fun applyVolume(p: ExoPlayer) { p.volume = if (muted) 0f else volume }
 
     private fun refreshVisibility() {
+        updateShield()
         val lp = holder.layoutParams
         holder.visibility = if (!gridHide && (loaded || freezeHold) && showWanted && lp.width > 0 && lp.height > 0) View.VISIBLE else View.INVISIBLE
     }
