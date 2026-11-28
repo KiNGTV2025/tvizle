@@ -333,6 +333,15 @@ class NativeVideo(
             override fun onPlayerError(error: PlaybackException) = handleError(error)
         })
         p.addAnalyticsListener(object : AnalyticsListener {
+            // Gerçek indirme hızı: ExoPlayer'ın her ölçüm penceresinde (yükleme süresi / bayt) gerçekten indirdiği veri; Wi-Fi, mobil ve kablolu için aynı.
+            override fun onBandwidthEstimate(eventTime: AnalyticsListener.EventTime, totalLoadTimeMs: Int, totalBytesLoaded: Long, bitrateEstimate: Long) {
+                if (totalLoadTimeMs > 0 && totalBytesLoaded > 0L) {
+                    val inst = totalBytesLoaded * 8000.0 / totalLoadTimeMs
+                    val old = measuredBps
+                    measuredBps = if (old <= 0.0 || android.os.SystemClock.elapsedRealtime() - measuredAt > 30000L) inst else old * 0.6 + inst * 0.4
+                    measuredAt = android.os.SystemClock.elapsedRealtime()
+                }
+            }
             override fun onDroppedVideoFrames(eventTime: AnalyticsListener.EventTime, droppedFrames: Int, elapsedMs: Long) {
                 dropped += droppedFrames
             }
@@ -425,6 +434,11 @@ class NativeVideo(
 
     // ───────────── Erken başlatma: uygulama açılırken sayfa yüklenmeden son kanal ─────────────
     private var earlyHold = false
+    @Volatile private var measuredBps = 0.0
+    @Volatile private var measuredAt = 0L
+    /** Yayının gerçek indirme hızı (Mbps). Son 20 sn'de ölçüm yoksa -1. */
+    fun measuredMbps(): Double =
+        if (measuredBps > 0.0 && android.os.SystemClock.elapsedRealtime() - measuredAt < 20000L) measuredBps / 1e6 else -1.0
     @Volatile var onFirstFrameCb: (() -> Unit)? = null
     /** Erken başlatılan yayın hâlâ sağlıklı mı (sayfa aynı adresi isterse yeniden yüklemeden devralınır). */
     fun earlyHealthy(): Boolean {

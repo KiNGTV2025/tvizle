@@ -833,6 +833,24 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             e.apply()
         }
 
+        /** Yayının gerçek indirme hızı (Mbps; Wi-Fi/mobil/kablolu). Ölçüm yoksa -1. */
+        @JavascriptInterface
+        fun streamMbps(): Double = try { nv.measuredMbps() } catch (e: Throwable) { -1.0 }
+
+        /** Gerçek Wi-Fi bağlantı hızı (Mbps, Android WifiManager link hızı). Wi-Fi'ye bağlı değilse / okunamazsa -1. */
+        @JavascriptInterface
+        @Suppress("DEPRECATION")
+        fun wifiMbps(): Int = try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            val nc = cm.getNetworkCapabilities(cm.activeNetwork)
+            if (nc == null || !nc.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)) -1
+            else {
+                val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+                val ls = wm.connectionInfo?.linkSpeed ?: -1
+                if (ls > 0) ls else -1
+            }
+        } catch (e: Throwable) { -1 }
+
         /** Sayfa <head> içinde sorar: erken başlatma sürüyorsa kendini yayının üstünde şeffaf/görünmez tutar (yükleme ekranı görünmez). */
         @JavascriptInterface
         fun isEarly(): Boolean = earlyActive && !earlyRevealed
