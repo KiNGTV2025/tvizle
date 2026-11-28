@@ -271,6 +271,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             nv.onFirstFrameCb = { hideLaunchSplash(true) }  // ilk kare gelince logo kalksın
             nv.load(url, sp.getString("el_ua", "") ?: "", sp.getString("el_ref", "") ?: "", 0L, true, sp.getString("el_kind", "") ?: "")
             nv.earlyShow()
+            runCatching { web.requestFocus() }   // tuşlar en baştan sayfaya gitsin
             uiHandler.postDelayed({ earlyReveal() }, 30000)  // her durumda sayfayı aç (sayfa hiç hazır demezse)
         } catch (e: Exception) {
             earlyActive = false
@@ -284,7 +285,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     private fun injectEarlyCss() {
         if (earlyActive && !earlyRevealed) { earlyCssOn = true; web.evaluateJavascript(EARLY_CSS_JS, null) }
     }
-    private fun earlyReveal() {
+    private fun earlyReveal(fromKey: Boolean = false) {
         if (!earlyActive || earlyRevealed) return
         earlyRevealed = true
         earlyCssOn = false
@@ -294,7 +295,8 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         web.alpha = 1f
         web.requestFocus()   // kumanda tuşları kesin sayfaya gitsin
         // sayfa aynı kanalı yüklemediyse (üyelik engeli, farklı kanal vb.) erken oynatmayı durdur
-        uiHandler.postDelayed({
+        // Kumanda tuşuyla erken açıldıysa sayfa henüz yayını devralmamış olabilir: yayını kesme.
+        if (!fromKey) uiHandler.postDelayed({
             if (!earlyAdopted && !isFinishing && !isDestroyed) runCatching { nv.stop() }
         }, 6000)
     }
@@ -968,7 +970,12 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         @JavascriptInterface
         fun bg(css: String) = ui {
             val m = Regex("""rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)""").find(css)
-            if (m != null) nv.background(Color.rgb(m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.groupValues[3].toInt()))
+            if (m != null) {
+                val r = m.groupValues[1].toInt(); val g = m.groupValues[2].toInt(); val b = m.groupValues[3].toInt()
+                val mx = maxOf(r, g, b); val mn = minOf(r, g, b)
+                // Parlak/canlı tema rengi (ör. Pembe) video katmanı gizliyken (kanal bağlanırken) tüm ekranı boyuyordu → siyah kal.
+                nv.background(if (mx > 90 && mx - mn > 60) Color.BLACK else Color.rgb(r, g, b))
+            }
         }
     }
 
@@ -1419,6 +1426,14 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                     }
                     return true
                 }
+            }
+        }
+        // Erken başlatma sürerken kumanda tuşuna basılırsa arayüzü hemen aç (sayfa hazır demesini bekleme).
+        if (earlyActive && !earlyRevealed && e.action == KeyEvent.ACTION_DOWN) {
+            when (e.keyCode) {
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER,
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT,
+                KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_BACK -> earlyReveal(true)
             }
         }
         val dir = zapDirection(e.keyCode)
