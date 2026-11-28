@@ -2243,6 +2243,10 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             var total = cur.getLong(cur.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
             if (total <= 0L) total = updArgs?.size ?: 0L
             val pv = updProgView
+            if ((st == DownloadManager.STATUS_PENDING || (st == DownloadManager.STATUS_RUNNING && got <= 0L)) &&
+                SystemClock.uptimeMillis() - dlStartT > 8000L && !ownDlTried) {
+                fallbackToOwnDownload(); return        // 8 sn'dir başlamadı: DownloadManager takıldı
+            }
             if (st == DownloadManager.STATUS_PENDING) {
                 updStatusTv?.text = "Sıraya alındı…"; pv?.indeterminate = true; return
             }
@@ -2374,6 +2378,8 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             // Android 8+: "Bilinmeyen kaynaklar" izni bu uygulama için ayrıca açılmalı
             pendingApkUrl = apkUrl
             awaitingInstallPermission = true
+            // Android, "bilinmeyen kaynaklar" izni verilince uygulama sürecini öldürebilir (özellikle TV box'larda): durumu kalıcı tut.
+            getSharedPreferences("umittv", MODE_PRIVATE).edit().putString("upd_perm_url", apkUrl).putLong("upd_perm_at", System.currentTimeMillis()).apply()
             setUpdState(UPD_PERM)
             toast("Kurulum için bir sonraki ekranda ÜmitTV'ye izin ver")
             try {
@@ -2389,10 +2395,28 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
     /** Ayarlar ekranından dönünce: izin verildiyse indirmeye devam et, verilmediyse modal yerinde kalır. */
     private fun checkPendingInstallResume(fromResult: Boolean = false) {
-        if (!awaitingInstallPermission) return
+        if (!awaitingInstallPermission) {
+            // Uygulama izin ekranındayken öldürüldüyse (süreç yeniden başladı): izin verildiyse indirmeyi kaldığı yerden başlat
+            val sp = getSharedPreferences("umittv", MODE_PRIVATE)
+            val pu = sp.getString("upd_perm_url", null)
+            if (pu != null) {
+                val fresh = System.currentTimeMillis() - sp.getLong("upd_perm_at", 0L) < 10L * 60 * 1000
+                if (canInstallUnknown() || !fresh) {
+                    sp.edit().remove("upd_perm_url").remove("upd_perm_at").apply()
+                    if (fresh && updState != UPD_DL && updState != UPD_PREP && pendingDownloadId == -1L && !ownDlActive) {
+                        updHidden = false
+                        ensureUpdBanner()
+                        setUpdState(UPD_PREP)
+                        startApkDownload(pu)
+                    }
+                }
+            }
+            return
+        }
         val granted = canInstallUnknown()
         if (!granted && !fromResult) return          // izin ekranı hâlâ açık olabilir; sonucu bekle
         awaitingInstallPermission = false
+        getSharedPreferences("umittv", MODE_PRIVATE).edit().remove("upd_perm_url").remove("upd_perm_at").apply()
         val u = pendingApkUrl; pendingApkUrl = null
         updHidden = false
         ensureUpdBanner()
@@ -2441,6 +2465,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                     ?.filter { it.name.startsWith("UmitTV_update") }?.forEach { it.delete() }
             }
             pendingApkName = "UmitTV_update_" + System.currentTimeMillis() + ".apk"
+            lastApkUrl = apkUrl; ownDlTried = false; dlStartT = SystemClock.uptimeMillis()
             val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
             val req = DownloadManager.Request(Uri.parse(apkUrl))
                 .setTitle("ÜmitTV güncelleme")
@@ -2453,8 +2478,126 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             setUpdState(UPD_DL)
             startUpdPoll()
         } catch (e: Exception) {
-            setUpdState(UPD_ERR, "İndirme başlatılamadı")
+            // DownloadManager kullanılamıyor (bazı TV box'larda kapalı/bozuk): uygulama içi indirmeye geç
+            startOwnDownload(apkUrl)
         }
+    }
+
+    // ── Uygulama içi indirici: DownloadManager "Sıraya alındı"da takılırsa (Botech/WZone gibi kutular) devreye girer ──
+    private var lastApkUrl = ""
+    private var dlStartT = 0L
+    private var ownDlTried = false
+    @Volatile private var ownDlActive = false
+
+    private fun fallbackToOwnDownload() {
+        val id = pendingDownloadId
+        stopUpdPoll()
+        pendingDownloadId = -1L
+        if (id != -1L) runCatching { (getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).remove(id) }
+        startOwnDownload(lastApkUrl)
+    }
+
+    private fun ownProgress(got: Long, total: Long) {
+        val pv = updProgView
+        updStatusTv?.text = "İndiriliyor…"
+        if (total > 0L) {
+            val p = (got.toFloat() / total).coerceIn(0f, 1f)
+            pv?.indeterminate = false; pv?.setTarget(p)
+            updStatusTv?.text = "İndiriliyor " + (p * 100).toInt() + "%"
+            updDetailTv?.text = fmtMb(got) + " / " + fmtMb(total) + " MB"
+        } else {
+            pv?.indeterminate = true
+            updDetailTv?.text = fmtMb(got) + " MB indirildi"
+        }
+    }
+
+    private fun startOwnDownload(url: String) {
+        if (ownDlActive) return
+        if (url.isBlank()) { setUpdState(UPD_ERR, "Güncelleme adresi yok"); return }
+        ownDlTried = true; ownDlActive = true
+        val dir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: cacheDir
+        runCatching {
+            dir.mkdirs()
+            dir.listFiles()?.filter { it.name.startsWith("UmitTV_update") }?.forEach { it.delete() }
+        }
+        pendingApkName = "UmitTV_update_" + System.currentTimeMillis() + ".apk"
+        val out = File(dir, pendingApkName)
+        setUpdState(UPD_DL)
+        updStatusTv?.text = "İndiriliyor…"; updProgView?.indeterminate = true
+        val expected = updArgs?.size ?: 0L
+        Thread {
+            var err: String? = null
+            try {
+                fun open(addr: String): HttpURLConnection = (URL(addr).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 15000; readTimeout = 25000; instanceFollowRedirects = false
+                    setRequestProperty("Accept", "application/octet-stream")
+                    setRequestProperty("User-Agent", "UmitTV")
+                }
+                var u = url
+                var hops = 0
+                var conn = open(u)
+                while (true) {
+                    val code = conn.responseCode
+                    if (code in 300..399 && hops < 6) {
+                        val loc = conn.getHeaderField("Location")
+                        conn.disconnect()
+                        if (loc.isNullOrBlank()) throw java.io.IOException("yönlendirme hatası")
+                        u = URL(URL(u), loc).toString(); hops++
+                        conn = open(u)
+                        continue
+                    }
+                    if (code !in 200..299) { conn.disconnect(); throw java.io.IOException("HTTP $code") }
+                    break
+                }
+                val total = conn.contentLength.toLong().takeIf { it > 0L } ?: expected
+                var got = 0L
+                var lastUi = 0L
+                conn.inputStream.use { ins ->
+                    out.outputStream().use { os ->
+                        val buf = ByteArray(64 * 1024)
+                        while (true) {
+                            val n = ins.read(buf)
+                            if (n < 0) break
+                            os.write(buf, 0, n)
+                            got += n
+                            val now = SystemClock.uptimeMillis()
+                            if (now - lastUi > 250L) { lastUi = now; val g = got; runOnUiThread { ownProgress(g, total) } }
+                        }
+                    }
+                }
+                conn.disconnect()
+                if (total > 0L && got < total) throw java.io.IOException("eksik indirme")
+            } catch (e: Exception) { err = e.message ?: "bağlantı hatası" }
+            runOnUiThread {
+                ownDlActive = false
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (err == null) onApkDownloaded(out)
+                else {
+                    runCatching { out.delete() }
+                    if (updHidden) { updHidden = false; ensureUpdBanner() }
+                    setUpdState(UPD_ERR, "İndirme başarısız: $err")
+                }
+            }
+        }.start()
+    }
+
+    /** İndirme (DownloadManager ya da uygulama içi) bitti: doğrula ve kuruluma geç. */
+    private fun onApkDownloaded(apk: File) {
+        val want = updExpectedSha
+        if (want.isNotEmpty() && fileSha256(apk) != want) {
+            runCatching { apk.delete() }
+            if (updHidden) { updHidden = false; ensureUpdBanner() }
+            setUpdState(UPD_ERR, "İndirilen dosya doğrulanamadı (SHA-256), tekrar dene")
+            return
+        }
+        updReadyApk = apk
+        if (updHidden) { updHidden = false; ensureUpdBanner() }
+        setUpdState(UPD_INSTALLING)
+        uiHandler.postDelayed({
+            if (isFinishing) return@postDelayed
+            if (installApk(apk)) { setUpdState(UPD_READY); uiHandler.postDelayed({ if (!isFinishing && updState == UPD_READY) finishUpdateModal() }, 1600) }
+            else { updReadyApk = null; setUpdState(UPD_ERR, "İndirilen dosya geçersiz") }
+        }, 700)
     }
 
     private fun registerDownloadReceiverIfNeeded() {
@@ -2476,22 +2619,10 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                     val status = if (statusIdx >= 0) cur.getInt(statusIdx) else -1
                     stopUpdPoll()
                     if (status == DownloadManager.STATUS_SUCCESSFUL) {
-                        val apk = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), pendingApkName)
-                        val want = updExpectedSha
-                        if (want.isNotEmpty() && fileSha256(apk) != want) {
-                            runCatching { apk.delete() }
-                            if (updHidden) { updHidden = false; ensureUpdBanner() }
-                            setUpdState(UPD_ERR, "İndirilen dosya doğrulanamadı (SHA-256), tekrar dene")
-                            return
-                        }
-                        updReadyApk = apk
-                        if (updHidden) { updHidden = false; ensureUpdBanner() }   // gizliydiyse bitince modalı geri getir
-                        setUpdState(UPD_INSTALLING)
-                        uiHandler.postDelayed({
-                            if (isFinishing) return@postDelayed
-                            if (installApk(apk)) { setUpdState(UPD_READY); uiHandler.postDelayed({ if (!isFinishing && updState == UPD_READY) finishUpdateModal() }, 1600) }
-                            else { updReadyApk = null; setUpdState(UPD_ERR, "İndirilen dosya geçersiz") }
-                        }, 700)
+                        onApkDownloaded(File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), pendingApkName))
+                    } else if (!ownDlTried && lastApkUrl.isNotBlank()) {
+                        pendingDownloadId = -1L
+                        startOwnDownload(lastApkUrl)     // DownloadManager başarısız: uygulama içi indirmeyi dene
                     } else {
                         if (updHidden) { updHidden = false; ensureUpdBanner() }
                         setUpdState(UPD_ERR, "İndirme başarısız oldu")
