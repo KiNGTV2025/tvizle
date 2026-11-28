@@ -69,8 +69,10 @@ object ExoConfig {
                 if (low) 800 else 1500,     // v10.7: kanal geçişinde daha erken başla (zaplama hızlansın)
                 if (low) 2000 else 5000
             )
-            .setTargetBufferBytes(if (low) 32 * 1024 * 1024 else 64 * 1024 * 1024)
-            .setPrioritizeTimeOverSizeThresholds(true)
+            .setTargetBufferBytes(if (low) 16 * 1024 * 1024 else 64 * 1024 * 1024)
+            // Düşük RAM'li TV kutularında tek oynatıcı için tampon belleğini sınırlı tut.
+            // Süre tabanlı canlı yayın davranışı korunur; bellek hedefi dolunca daha fazla veri biriktirilmez.
+            .setPrioritizeTimeOverSizeThresholds(!low)
             .build()
     }
 }

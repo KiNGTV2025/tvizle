@@ -426,6 +426,8 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         uiHandler.post { earlyStart() }
 
         with(web.settings) {
+            // WebView önbelleğini açık tut; düşük cihazlarda gereksiz ön çizim/bellek yükü ekleme.
+            // JavaScript ve DOM depolama uygulamanın temel işlevleri için gereklidir.
             javaScriptEnabled = true
             domStorageEnabled = true
             databaseEnabled = true

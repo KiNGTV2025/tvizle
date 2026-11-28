@@ -20,10 +20,15 @@ object DevicePerformance {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
         val memory = ActivityManager.MemoryInfo()
         runCatching { am?.getMemoryInfo(memory) }
-        if (!DecoderTweaks.isTv(context)) return false
-        val cores = Runtime.getRuntime().availableProcessors()
+        val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
         val totalRam = if (Build.VERSION.SDK_INT >= 16) memory.totalMem else 0L
         val memoryClass = am?.memoryClass ?: 128
-        return (totalRam in 1L until 3_000L * 1024L * 1024L) || memoryClass <= 160 || cores <= 4
+        val tv = DecoderTweaks.isTv(context)
+        // Android'ın kendi düşük-RAM işaretini önceliklendir. Telefonlarda gereksiz yere
+        // Lite profiline geçmemek için TV dışındaki eşikleri daha muhafazakâr tut.
+        val platformLowRam = Build.VERSION.SDK_INT >= 19 && runCatching { am?.isLowRamDevice == true }.getOrDefault(false)
+        val veryLowRam = totalRam in 1L until (1_800L * 1024L * 1024L) || memoryClass <= 96 || cores <= 2
+        val constrainedTv = tv && (totalRam in 1L until (3_000L * 1024L * 1024L) || memoryClass <= 160 || cores <= 4)
+        return platformLowRam || veryLowRam || constrainedTv
     }
 }
