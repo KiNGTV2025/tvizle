@@ -1929,9 +1929,19 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             duration = 320; interpolator = android.view.animation.DecelerateInterpolator()
             addUpdateListener {
                 val l = web.layoutParams as? FrameLayout.LayoutParams ?: return@addUpdateListener
-                l.topMargin = it.animatedValue as Int; web.layoutParams = l
+                // Alt kenar boşluğu üstün tersi: WebView yüksekliği DEĞİŞMEZ (sayfa yeniden dizilmez, video ölçeği şaşmaz,
+                // 1.5 GB'lık kutularda güncelleme sonrası kasma/yarım kalan ekran olmaz); sadece aşağı kayar.
+                val v = it.animatedValue as Int
+                l.topMargin = v; l.bottomMargin = -v; web.layoutParams = l
                 runCatching { nv.reapply(); gv.reapply() }   // video katmanı WebView ile birlikte kaysın
             }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(a: android.animation.Animator) {
+                    val l = web.layoutParams as? FrameLayout.LayoutParams ?: return
+                    if (l.topMargin == 0 && l.bottomMargin != 0) { l.bottomMargin = 0; web.layoutParams = l }
+                    runCatching { nv.reapply(); gv.reapply() }
+                }
+            })
             start()
         }
     }
