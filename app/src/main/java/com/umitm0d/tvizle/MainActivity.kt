@@ -485,8 +485,9 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
             /** getUserMedia: mikrofon (sesli arama) ve kamera (kumanda QR tarama) istekleri */
             override fun onPermissionRequest(request: PermissionRequest) {
+                slog("web izin isteği: origin=${request.origin} kaynak=${request.resources.joinToString()} kamera=${hasCameraPerm()} mik=${hasAudioPerm()}")
                 // Kamera/mikrofon yalnızca kendi sayfamıza (https + umitm0d.github.io); başka site/iframe reddedilir.
-                if (!permOriginOk(request)) { request.deny(); return }
+                if (!permOriginOk(request)) { slog("web izin reddedildi: origin uyuşmadı"); request.deny(); return }
                 val wantsAudio = request.resources.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)
                 val wantsVideo = request.resources.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
                 if (!wantsAudio && !wantsVideo) { request.deny(); return }
@@ -645,9 +646,31 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         val bytes = try { t.get(30, TimeUnit.SECONDS) } catch (e: Exception) { null }
         val hdr = mapOf("Cache-Control" to "no-store")
         return if (bytes != null)
-            WebResourceResponse("text/html", "UTF-8", 200, "OK", hdr, ByteArrayInputStream(bytes))
+            WebResourceResponse("text/html", "UTF-8", 200, "OK", hdr, ByteArrayInputStream(withSpeechShim(bytes)))
         else
             WebResourceResponse("text/html", "UTF-8", 200, "OK", hdr, ByteArrayInputStream(OFFLINE_HTML.toByteArray(Charsets.UTF_8)))
+    }
+
+    /** assets/umit_native.js: window.SpeechRecognition / webkitSpeechRecognition → yerel SpeechRecognizer köprüsü. */
+    private val speechShim: String by lazy {
+        runCatching { assets.open("umit_native.js").bufferedReader(Charsets.UTF_8).use { it.readText() } }.getOrDefault("")
+    }
+
+    /** Sayfa `const VoiceSR = window.SpeechRecognition || window.webkitSpeechRecognition` ile köprüyü açılışta yakalar;
+     *  WebView'de ikisi de tanımsız olduğundan bu betik <head>'in başına, sayfa betiklerinden ÖNCE eklenir
+     *  (sayfa zaten kendi kopyasını taşıyorsa __umitSRShim bekçisi çift kurulumu engeller). */
+    private fun withSpeechShim(src: ByteArray): ByteArray {
+        val shim = speechShim
+        if (shim.isEmpty()) return src
+        val head = String(src, 0, minOf(src.size, 8192), Charsets.ISO_8859_1)   // 1 bayt = 1 karakter: indeksler birebir
+        val m = Regex("<head[^>]*>", RegexOption.IGNORE_CASE).find(head) ?: return src
+        val at = m.range.last + 1
+        val ins = ("<script>" + shim.replace("</script", "<\\/script") + "</script>").toByteArray(Charsets.UTF_8)
+        val out = ByteArray(src.size + ins.size)
+        System.arraycopy(src, 0, out, 0, at)
+        System.arraycopy(ins, 0, out, at, ins.size)
+        System.arraycopy(src, at, out, at + ins.size, src.size - at)
+        return out
     }
 
     /** Sayfa yüklenemezse önce WebView önbelleğini, o da yoksa 'çevrimdışı' sayfasını gösteren istemci. */
@@ -1000,6 +1023,14 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 startSpeech(lang, interim, maxAlt)
             }
         }
+        /** Kumanda panelindeki "QR Tara": WebView kamerası yerine Google'ın hazır kod tarayıcısı (kamera izni gerekmez). */
+        @JavascriptInterface
+        fun scanQr() {
+            runOnUiThread {
+                if (!isTrustedUrl(web.url)) { jsQr(null, "fail"); return@runOnUiThread }
+                startQrScan()
+            }
+        }
         @JavascriptInterface
         fun playNative(url: String, ua: String, referer: String) {
             runOnUiThread {
@@ -1042,6 +1073,27 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         fun cancelListening() { runOnUiThread { destroyRecognizer(immediate = true) } }
         @JavascriptInterface
         fun isAvailable(): Boolean = SpeechRecognizer.isRecognitionAvailable(this@MainActivity)
+    }
+
+    /** Google Code Scanner (Play Hizmetleri): kendi kamera ekranını açar, WebView kamerasına/iznine bağlı değildir. */
+    private fun startQrScan() {
+        try {
+            val opts = com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions.Builder()
+                .setBarcodeFormats(com.google.mlkit.vision.barcode.common.Barcode.FORMAT_QR_CODE)
+                .build()
+            com.google.mlkit.vision.codescanner.GmsBarcodeScanning.getClient(this, opts)
+                .startScan()
+                .addOnSuccessListener { b -> jsQr(b.rawValue ?: "", "") }
+                .addOnCanceledListener { jsQr(null, "cancel") }
+                .addOnFailureListener { e -> slog("qr tarayıcı hatası: ${e.javaClass.simpleName} ${e.message}"); jsQr(null, "fail") }
+        } catch (t: Throwable) {
+            slog("qr tarayıcı başlatılamadı: ${t.javaClass.simpleName} ${t.message}")
+            jsQr(null, "fail")
+        }
+    }
+
+    private fun jsQr(text: String?, err: String) {
+        web.evaluateJavascript("window.__umitQR&&window.__umitQR(${JSONObject.quote(text ?: "")},${JSONObject.quote(err)})", null)
     }
 
     private fun jsSR(type: String, data: JSONObject = JSONObject()) {

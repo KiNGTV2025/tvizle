@@ -76,6 +76,7 @@ dependencies {
     implementation("androidx.car.app:app:1.4.0")
     implementation("androidx.lifecycle:lifecycle-common:2.6.2")
     implementation("androidx.core:core-ktx:1.13.1")
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")   // kumanda QR tarama (WebView kamerası yerine)
     // Kendi oynatıcımız (Televizo da ExoPlayer motorunu kullanıyor; bu açık kaynak sürümü)
     // GERİ ALINDI (build log'da görüldü): io.put:media3-ffmpeg-decoder:1.11.1+1 kendi AndroidManifest'inde
     // minSdk 26 istiyor → "uses-sdk:minSdkVersion 23 cannot be smaller than version 26" ile derleme patlıyor,
