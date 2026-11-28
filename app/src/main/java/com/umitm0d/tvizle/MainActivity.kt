@@ -1516,7 +1516,23 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
     private fun inPip(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode
 
+    /** v13.8: kumandadaki Google Asistan / arama tuşu → Asistan yerine uygulamanın kendi sesli komutunu aç. */
+    private fun triggerInAppVoice() {
+        if (!::web.isInitialized || !isTrustedUrl(web.url)) return
+        web.evaluateJavascript("(function(){try{if(typeof toggleVoiceCommand==='function'){toggleVoiceCommand();return 1}}catch(e){}return 0})()", null)
+    }
+
+    override fun onSearchRequested(): Boolean {
+        if (onTvDevice) { triggerInAppVoice(); return true }
+        return super.onSearchRequested()
+    }
+
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {
+        if (onTvDevice && !inPip() && (e.keyCode == KeyEvent.KEYCODE_ASSIST || e.keyCode == KeyEvent.KEYCODE_VOICE_ASSIST ||
+                    e.keyCode == KeyEvent.KEYCODE_SEARCH)) {
+            if (e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0) { slog("asistan tuşu yakalandı kod=${e.keyCode}"); triggerInAppVoice() }
+            return true
+        }
         // PiP'teyken kumandanın OK/yön/menü/oynat tuşları tam ekrana döndürür (Android TV'de PiP'e odaklanılamıyor).
         if (inPip()) {
             when (e.keyCode) {
