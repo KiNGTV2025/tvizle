@@ -316,6 +316,14 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     private var recGen = 0
     private var startToken = 0            // gecikmeli başlatmaları iptal etmek için
     private var lastRecDestroyAt = 0L     // son recognizer.destroy() zamanı (SystemClock.uptimeMillis)
+    @Volatile private var sessLive = false  // v13.8: sonuç/hata gelmiş (bitmiş) oturuma stopListening() gönderilmesin
+
+    /** v13.8: cihazdaki ses tanıma servisleri (Google önce). Varsayılan servis üst üste sessiz kalırsa sırayla diğerleri denenir. */
+    private fun recServices(): List<android.content.ComponentName> = runCatching {
+        packageManager.queryIntentServices(Intent(android.speech.RecognitionService.SERVICE_INTERFACE), 0)
+            .mapNotNull { ri -> ri.serviceInfo?.let { android.content.ComponentName(it.packageName, it.name) } }
+            .sortedByDescending { it.packageName.startsWith("com.google.") }
+    }.getOrDefault(emptyList())
 
     // direksiyon tuşları
     private var mediaSession: MediaSession? = null
@@ -1077,6 +1085,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         fun stopListening() {
             runOnUiThread {
                 val r = recognizer ?: return@runOnUiThread
+                if (!sessLive) { slog("stopListening yoksayıldı: oturum zaten bitti"); return@runOnUiThread }
                 val g = recGen
                 // Stop isteğini 800 ms ertelemek, bazı Android 10 TV kutularında
                 // AudioRecord oturumunu gereksiz yere açık tutuyor. Hemen gönder.
@@ -1141,6 +1150,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     private fun destroyRecognizer(sessionEnded: Boolean = false, immediate: Boolean = false) {
         recGen++
         startToken++   // bekleyen (gecikmeli) bir başlatma varsa iptal et
+        sessLive = false
         val r = recognizer
         recognizer = null
         if (r == null) return
@@ -1198,6 +1208,10 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
     /** Sistem ses tanıma penceresi (Google'ın kendi ekranı): kendi SpeechRecognizer'ımız üst üste ses alamazsa yedek yol. */
     private fun startSpeechViaIntent(lang: String, maxAlt: Int): Boolean {
+        // v13.8: Android TV / Google TV'de ACTION_RECOGNIZE_SPEECH, Google Asistan'ı açıyor: "TRT1" gibi bir kanal adını kendi
+        // TV rehberinde arayıp "İstediğin kanalı bulamadık, TV rehberimi göster diyebilirsin" diyor ve mikrofonu bizden sonra
+        // da tutuyor (YouTube/Asistan duymaz oluyor). TV'de bu yedek yol KAPALI; kendi tanıyıcımız sıfırlanıp yeniden denenir.
+        if (onTvDevice) { slog("sistem ses penceresi TV'de devre dışı"); return false }
         val tag = if (lang.length == 2) lang.lowercase() + "-" + lang.uppercase() else lang
         val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -1233,10 +1247,11 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             jsSR("error", JSONObject().put("error", "aborted")); jsSR("end"); return
         }
         prepareAudioForMic()
-        if (silentFails >= 3) {
+        if (silentFails >= 3 && !onTvDevice) {
             slog("üst üste $silentFails sessiz oturum → sistem ses penceresi deneniyor")
             if (startSpeechViaIntent(lang, maxAlt)) return
         }
+        if (silentFails >= 2) slog("üst üste $silentFails sessiz oturum → tam sıfırlama")
         destroyRecognizer(immediate = true)
         val token = startToken
         val wait = (lastRecDestroyAt + REC_COOLDOWN_MS - SystemClock.uptimeMillis()).coerceIn(0L, REC_COOLDOWN_MS + REC_DESTROY_DELAY_MS)
@@ -1249,8 +1264,15 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
     private fun beginSpeech(lang: String, interim: Boolean, maxAlt: Int, attempt: Int) {
         val gen = recGen
-        val r = SpeechRecognizer.createSpeechRecognizer(this)
+        // v13.8: 2+ sessiz oturumdan sonra varsayılan servis yerine cihazdaki diğer tanıma servislerini sırayla dene
+        val svcs = if (silentFails >= 2) recServices() else emptyList()
+        val comp = if (svcs.isNotEmpty()) svcs[(silentFails - 2) % svcs.size] else null
+        val r = try {
+            if (comp != null) { slog("alternatif servis: ${comp.flattenToShortString()}"); SpeechRecognizer.createSpeechRecognizer(this, comp) }
+            else SpeechRecognizer.createSpeechRecognizer(this)
+        } catch (t: Throwable) { slog("servis seçilemedi: ${t.javaClass.simpleName}"); SpeechRecognizer.createSpeechRecognizer(this) }
         recognizer = r
+        sessLive = true
         var gotAny = false
         var ready = false
         var heard = false
@@ -1277,6 +1299,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             override fun onResults(b: Bundle?) {
                 if (!live()) return
                 val a = alts(b)
+                sessLive = false
                 slog("sonuç: ${a.length()} alternatif")
                 if (a.length() > 0) { silentFails = 0; jsSR("result", JSONObject().put("alts", a).put("final", true)) }
                 jsSR("end")
@@ -1284,6 +1307,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             }
             override fun onError(e: Int) {
                 if (!live()) return
+                sessLive = false
                 slog("hata kodu=$e heard=$heard ready=$ready gotAny=$gotAny " + micDiag())
                 // Servis meşgul / istemci hatası: JS'e hata göstermeden yerel olarak yeniden dene
                 if (!gotAny && attempt < 2 && (e == SpeechRecognizer.ERROR_RECOGNIZER_BUSY ||
@@ -1300,7 +1324,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 val benign = e == SpeechRecognizer.ERROR_NO_MATCH || e == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
                         e == SpeechRecognizer.ERROR_NETWORK || e == SpeechRecognizer.ERROR_NETWORK_TIMEOUT ||
                         e == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS
-                if (!gotAny && !heard && !benign && SystemClock.uptimeMillis() >= voiceUiSuppressUntil) {
+                if (!gotAny && !heard && !benign && !onTvDevice && SystemClock.uptimeMillis() >= voiceUiSuppressUntil) {
                     destroyRecognizer(sessionEnded = true)
                     if (startSpeechViaIntent(lang, maxAlt)) return
                 }
@@ -1349,6 +1373,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         uiHandler.postDelayed({
             if (gen == recGen && recognizer === r && !ready) {
                 slog("bekçi: 6 sn'de hazır olmadı")
+                silentFails++   // v13.8: servis hiç hazır olmuyorsa sayaç artsın → alternatif servis rotasyonu devreye girsin
                 destroyRecognizer()
                 val t = startToken
                 if (attempt < 2) {
