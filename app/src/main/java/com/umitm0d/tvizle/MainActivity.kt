@@ -1101,6 +1101,8 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             }
         }
         @JavascriptInterface
+        fun exportSpeechLog() { runOnUiThread { if (isTrustedUrl(web.url)) this@MainActivity.exportSpeechLog(force = true) } }
+        @JavascriptInterface
         fun cancelListening() { runOnUiThread { destroyRecognizer(immediate = true) } }
         @JavascriptInterface
         fun isAvailable(): Boolean = SpeechRecognizer.isRecognitionAvailable(this@MainActivity)
@@ -1180,6 +1182,35 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             if (f.length() > 100_000L) f.writeText("")
             f.appendText(java.text.SimpleDateFormat("MM-dd HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date()) + " " + msg + "\n")
         }
+    }
+
+    private var lastLogExport = 0L
+
+    /** v13.8: Android 11+ dosya yöneticileri Android/data'ya giremiyor → günlüğü İndirilenler/umit_speech_log.txt olarak da yaz. */
+    private fun exportSpeechLog(force: Boolean = false) {
+        val now = SystemClock.uptimeMillis()
+        if (!force && lastLogExport != 0L && now - lastLogExport < 60_000L) return
+        lastLogExport = now
+        try {
+            val src = File(getExternalFilesDir(null) ?: filesDir, "speech_log.txt")
+            if (!src.exists()) { if (force) toast("Henüz ses günlüğü yok"); return }
+            val bytes = src.readBytes()
+            if (Build.VERSION.SDK_INT >= 29) {
+                val col = android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
+                runCatching { contentResolver.delete(col, android.provider.MediaStore.Downloads.DISPLAY_NAME + "=?", arrayOf("umit_speech_log.txt")) }
+                val cv = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.Downloads.DISPLAY_NAME, "umit_speech_log.txt")
+                    put(android.provider.MediaStore.Downloads.MIME_TYPE, "text/plain")
+                    put(android.provider.MediaStore.Downloads.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+                }
+                val uri = contentResolver.insert(col, cv) ?: return
+                contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+            } else {
+                val d = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                d.mkdirs(); File(d, "umit_speech_log.txt").writeBytes(bytes)
+            }
+            if (force) toast("Ses günlüğü kaydedildi: İndirilenler / umit_speech_log.txt")
+        } catch (t: Throwable) { android.util.Log.w("UmitSpeech", "günlük dışa aktarılamadı: " + t.message); if (force) toast("Günlük kaydedilemedi") }
     }
 
     /** Mikrofon durumu özeti: giriş cihazları, aktif kayıt sayısı, sessize alınan kayıt, ses modu, mikrofon mute. */
@@ -1332,6 +1363,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                             e == SpeechRecognizer.ERROR_AUDIO || e == SpeechRecognizer.ERROR_RECOGNIZER_BUSY)) {
                     silentFails++
                     if (silentFails == 2) toast("Mikrofon sesi gelmiyor (kod $e) – ${micDiag()}")
+                    if (silentFails >= 2) exportSpeechLog()
                 } else if (heard || gotAny) silentFails = 0
                 val code = when (e) {
                     SpeechRecognizer.ERROR_NO_MATCH,
@@ -1530,7 +1562,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {
         if (onTvDevice && !inPip() && (e.keyCode == KeyEvent.KEYCODE_ASSIST || e.keyCode == KeyEvent.KEYCODE_VOICE_ASSIST ||
                     e.keyCode == KeyEvent.KEYCODE_SEARCH)) {
-            if (e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0) { slog("asistan tuşu yakalandı kod=${e.keyCode}"); triggerInAppVoice() }
+            if (e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0) { slog("asistan tuşu yakalandı kod=${e.keyCode}"); exportSpeechLog(); triggerInAppVoice() }
             return true
         }
         // PiP'teyken kumandanın OK/yön/menü/oynat tuşları tam ekrana döndürür (Android TV'de PiP'e odaklanılamıyor).
