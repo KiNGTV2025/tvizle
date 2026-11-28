@@ -284,16 +284,6 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
     private fun injectEarlyCss() {
         if (earlyActive && !earlyRevealed) { earlyCssOn = true; web.evaluateJavascript(EARLY_CSS_JS, null) }
     }
-    /** Android TV kumandasının ilk tuşlarının WebView'e ulaşmasını garanti et. */
-    private fun focusWebForRemote() {
-        if (!::web.isInitialized || isFinishing || isDestroyed) return
-        runCatching {
-            web.isFocusable = true
-            web.isFocusableInTouchMode = true
-            web.requestFocus()
-        }
-    }
-
     private fun earlyReveal() {
         if (!earlyActive || earlyRevealed) return
         earlyRevealed = true
@@ -302,7 +292,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         hideLaunchSplash(true)
         web.evaluateJavascript("(function(){try{var e=document.getElementById('umit-early');if(e)e.remove();}catch(x){}})()", null)
         web.alpha = 1f
-        focusWebForRemote()   // açılış sonrası D-pad odağını WebView'e sabitle
+        web.requestFocus()   // kumanda tuşları kesin sayfaya gitsin
         // sayfa aynı kanalı yüklemediyse (üyelik engeli, farklı kanal vb.) erken oynatmayı durdur
         uiHandler.postDelayed({
             if (!earlyAdopted && !isFinishing && !isDestroyed) runCatching { nv.stop() }
@@ -693,8 +683,6 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 uiHandler.postDelayed({ earlyReveal() }, 25000)
             }
             hideLaunchSplash()
-            focusWebForRemote()
-            uiHandler.postDelayed({ focusWebForRemote() }, 350)
             if (!onTvDevice) v.evaluateJavascript(PIP_SHIM_JS, null)   // TV'de PiP yok; güven denetimi enterPip() içinde yapılır
             if (onTvDevice && DevicePerformance.isLowEnd(this@MainActivity)) {
                 v.evaluateJavascript("(function(){window.__umitLowEnd=true;document.documentElement.classList.add('umit-lowend-tv','perf-lite','umit-vidlean','umit-hd-lean');})();", null)
@@ -1022,24 +1010,21 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             runOnUiThread {
                 val r = recognizer ?: return@runOnUiThread
                 val g = recGen
-                // stopListening ana iş parçacığında çağrılır; servis sonucunu bekle, watchdog yalnızca takılırsa devreye girer.
+                // Stop isteğini 800 ms ertelemek, bazı Android 10 TV kutularında
+                // AudioRecord oturumunu gereksiz yere açık tutuyor. Hemen gönder.
                 runCatching { r.stopListening() }.onFailure { slog("stopListening hata: ${it.javaClass.simpleName}") }
                 // Servis cevap vermezse oturumu kesin kapat ve JS tarafını da sonlandır.
                 uiHandler.postDelayed({
                     if (g == recGen && recognizer === r) {
                         slog("stopListening watchdog: zorla kapatıldı " + micDiag())
-                        destroyRecognizer(immediate = false)
+                        destroyRecognizer(immediate = true)
                         jsSR("end")
                     }
                 }, REC_STOP_GRACE_MS)
             }
         }
         @JavascriptInterface
-        fun cancelListening() { runOnUiThread {
-            // cancel() ile destroy() aynı anda çağrılmasın: bazı TV Box SpeechRecognitionService
-            // uygulamaları IPC iptalini işlerken AudioRecord oturumunu serbest bırakmıyor.
-            destroyRecognizer(immediate = false)
-        } }
+        fun cancelListening() { runOnUiThread { destroyRecognizer(immediate = true) } }
         @JavascriptInterface
         fun isAvailable(): Boolean = SpeechRecognizer.isRecognitionAvailable(this@MainActivity)
     }
@@ -1113,8 +1098,11 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
     /** Başlamadan önce kendini onarım: sistem mikrofonu sessize alınmışsa aç, ses modu iletişimde takılı kaldıysa normale döndür. */
     private fun prepareAudioForMic() {
-        // Sistem mikrofon sessizini / AudioManager modunu uygulama adına değiştirme.
-        // Bu ayarlar tüm Android'i etkiler ve TV kumandası/Asistan oturumlarıyla çakışabilir.
+        try {
+            val am = getSystemService(AUDIO_SERVICE) as android.media.AudioManager
+            if (am.isMicrophoneMute) { am.isMicrophoneMute = false; slog("mic mute kapatıldı") }
+            if (am.mode == android.media.AudioManager.MODE_IN_COMMUNICATION) { am.mode = android.media.AudioManager.MODE_NORMAL; slog("ses modu NORMAL'e döndürüldü") }
+        } catch (e: Throwable) { }
         slog("hazırlık: " + micDiag())
     }
 
@@ -1157,7 +1145,7 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
             slog("üst üste $silentFails sessiz oturum → sistem ses penceresi deneniyor")
             if (startSpeechViaIntent(lang, maxAlt)) return
         }
-        destroyRecognizer(immediate = false)
+        destroyRecognizer(immediate = true)
         val token = startToken
         val wait = (lastRecDestroyAt + REC_COOLDOWN_MS - SystemClock.uptimeMillis()).coerceIn(0L, REC_COOLDOWN_MS + REC_DESTROY_DELAY_MS)
         if (wait > 0L) {
@@ -1433,13 +1421,6 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
                 }
             }
         }
-        if (onTvDevice && e.action == KeyEvent.ACTION_DOWN && e.keyCode in setOf(
-                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN,
-                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT,
-                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER
-            ) && !web.hasFocus()) {
-            focusWebForRemote()
-        }
         val dir = zapDirection(e.keyCode)
         if (dir != 0) {
             if (e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0) zap(dir > 0)
@@ -1637,13 +1618,27 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) { immersive(); if (onTvDevice) uiHandler.postDelayed({ focusWebForRemote() }, 100) }
+        if (hasFocus) immersive()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Activity yeniden görünür olduğunda WebView zamanlayıcılarını tekrar aç.
+        // pauseTimers/resumeTimers WebView motorundaki JS zamanlayıcılarını da durdurur/başlatır.
+        runCatching { web.resumeTimers() }
+    }
+
+    override fun onStop() {
+        // Uygulama gerçekten görünür değilken (Home/başka uygulama) WebView'in
+        // setInterval/setTimeout döngülerinin arka planda CPU tüketmesini engelle.
+        // onPause zaten video ve mikrofonu durdurur; burada JS zamanlayıcılarını
+        // tamamen askıya alıyoruz. Geri dönünce onStart bunları yeniden açar.
+        runCatching { web.pauseTimers() }
+        super.onStop()
     }
 
     override fun onResume() {
         super.onResume(); web.onResume(); immersive(); nv.onHostStart(); gv.onHostStart()
-        focusWebForRemote()
-        uiHandler.postDelayed({ focusWebForRemote() }, 180)
         mediaSession?.isActive = true            // direksiyon medya tuşları bu uygulamaya gelsin
         if (!btnReceiverOn) {
             val f = IntentFilter(Intent.ACTION_MEDIA_BUTTON).apply { priority = 1000 }
@@ -1660,8 +1655,13 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         mediaSession?.isActive = false           // arka plandayken müzik/navigasyon uygulamasının tuşlarını çalma
         if (btnReceiverOn) { runCatching { unregisterReceiver(mediaBtnReceiver) }; btnReceiverOn = false }
         // Başka uygulamaya geçişte Android ses tanıma servisini ve mikrofonu hemen bırak.
-        destroyRecognizer(immediate = false)
+        destroyRecognizer(immediate = true)
         if (!pipLayoutActive && !(Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode)) {
+            // WebView tarafındaki HTML5 video/ses oturumlarını da kapat; yalnızca
+            // ExoPlayer'ı durdurmak, sayfa içindeki ek medya akışlarını durdurmayabilir.
+            runCatching {
+                web.evaluateJavascript("(function(){try{window.dispatchEvent(new Event('umit-app-background'));}catch(e){}try{document.querySelectorAll('video,audio').forEach(function(m){m.pause();});}catch(e){}try{if(window.voiceRecognition){try{window.voiceRecognition.abort();}catch(e){}}}catch(e){}})()", null)
+            }
             nv.onHostStop(); gv.onHostStop()
         }
         web.onPause(); super.onPause()
