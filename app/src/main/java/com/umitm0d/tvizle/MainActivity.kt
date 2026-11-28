@@ -1146,14 +1146,15 @@ a{background:#ff8a1f;color:#140b05;padding:14px 32px;border-radius:12px;font-wei
         if (r == null) return
         runCatching { r.setRecognitionListener(noopRecListener) }      // ölü oturumdan geri çağrı gelmesin
         if (!sessionEnded) runCatching { r.cancel() }
-        if (immediate) {
+        // cancel()'ın Google ses servisine ulaşması için destroy() HER ZAMAN geciktirilir. Eskiden immediate=true (başlangıçta, iptalde,
+        // arka plana geçişte) cancel()+destroy() art arda çağrılıyordu: servis oturumu kapatamayıp mikrofonu tutuyor, sonraki dinleme
+        // sessiz kalıyor, Asistan/YouTube da duymuyordu (TV box yeniden başlayana kadar). `immediate` parametresi artık yalnızca uyumluluk için duruyor.
+        val delay = if (sessionEnded) 120L else REC_DESTROY_DELAY_MS
+        lastRecDestroyAt = SystemClock.uptimeMillis() + delay   // soğuma süresi gerçek destroy anından başlasın
+        uiHandler.postDelayed({
             runCatching { r.destroy() }
-            lastRecDestroyAt = SystemClock.uptimeMillis()
-        } else {
-            val delay = if (sessionEnded) 120L else REC_DESTROY_DELAY_MS
-            lastRecDestroyAt = SystemClock.uptimeMillis() + delay   // soğuma süresi gerçek destroy anından başlasın
-            uiHandler.postDelayed({ runCatching { r.destroy() } }, delay)
-        }
+            slog("tanıyıcı yok edildi " + micDiag())
+        }, delay)
     }
 
     // ───────── Tanı / kurtarma yardımcıları ─────────
